@@ -10,10 +10,14 @@ rsync -az --delete \
 
 ssh "$HOST" 'set -e
   test -f /opt/sync-raindrop/.env || { echo "falta /opt/sync-raindrop/.env"; exit 1; }
-  test -f /opt/sync-raindrop/rclone.conf || cp /root/.config/rclone/rclone.conf /opt/sync-raindrop/rclone.conf
+  # rclone reescreve o conf via arquivo temporário na MESMA pasta: a pasta precisa ser montada (rw), não só o arquivo
+  mkdir -p /opt/sync-raindrop/rclone
+  test -f /opt/sync-raindrop/rclone/rclone.conf || { test -f /opt/sync-raindrop/rclone.conf && mv /opt/sync-raindrop/rclone.conf /opt/sync-raindrop/rclone/rclone.conf; }
+  test -f /opt/sync-raindrop/rclone/rclone.conf || cp /root/.config/rclone/rclone.conf /opt/sync-raindrop/rclone/rclone.conf
   chmod 600 /opt/sync-raindrop/.env
-  chmod 600 /opt/sync-raindrop/rclone.conf
-  chown 10001:10001 /opt/sync-raindrop/rclone.conf
+  chmod 700 /opt/sync-raindrop/rclone
+  chmod 600 /opt/sync-raindrop/rclone/rclone.conf
+  chown -R 10001:10001 /opt/sync-raindrop/rclone
   mkdir -p /var/lib/sync-raindrop /opt/files/public/sync-raindrop
   chown -R 10001:10001 /var/lib/sync-raindrop /opt/files/public/sync-raindrop
   install -m 755 /opt/sync-raindrop/app/host/health-stale.sh /usr/local/bin/sync-raindrop-health-stale

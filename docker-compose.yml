@@ -14,7 +14,7 @@ services:
     volumes:
       - /var/lib/sync-raindrop:/var/lib/sync-raindrop
       - /opt/sync-raindrop/.env:/secrets/.env:ro
-      - /opt/sync-raindrop/rclone.conf:/secrets/rclone.conf
+      - /opt/sync-raindrop/rclone:/secrets/rclone
       - /opt/files/public/sync-raindrop:/public/sync-raindrop
     environment:
       - TZ=America/Sao_Paulo

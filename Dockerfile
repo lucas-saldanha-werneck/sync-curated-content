@@ -32,7 +32,7 @@ RUN chmod +x /app/entrypoint.sh /app/bin/sync.sh \
 
 ENV YTDLP_PROXY=http://127.0.0.1:8888 \
     HEALTH_PUBLIC_DIR=/public/sync-raindrop \
-    RCLONE_CONF=/secrets/rclone.conf
+    RCLONE_CONF=/secrets/rclone/rclone.conf
 
 ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["run"]

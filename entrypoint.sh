@@ -2,7 +2,8 @@
 set -euo pipefail
 
 mkdir -p /var/lib/sync-raindrop /public/sync-raindrop /tmp/work
-chown -R app:app /var/lib/sync-raindrop /public/sync-raindrop /tmp/work
+# sem -R: o deploy.sh já faz chown -R no host; dentro do container (sem DAC_READ_SEARCH) o -R falha em subpastas 700
+chown app:app /var/lib/sync-raindrop /public/sync-raindrop /tmp/work
 
 tinyproxy -c /etc/tinyproxy/tinyproxy.conf
 
