@@ -24,3 +24,38 @@ def test_undo_skips_when_edited_later(tmp_path):
     rid = j.start_run("distill", [7]); op = j.add_op(rid, 7, "wiki/a.md", "update", r0, "s"); j.confirm_op(op, r1)
     res = undo_run(rid, store, j, cfg)
     assert res["skipped"] == ["wiki/a.md"] and store.download("/Projects/vault/wiki/a.md")[0] == b"z\n"
+
+def test_undo_two_ops_same_path(tmp_path):
+    """Two ops on same path: one result entry, stripped of both ids."""
+    store = make_store(); cfg = Config(); j = Journal(tmp_path / "j.db")
+    r0 = store.add("/Projects/vault/wiki/a.md", b"a\n## X\nb\n")
+    after1 = ("a\n## X\n" + marker(7, "2026-09-11") + "\n- c1\nb\n").encode()
+    r1 = store.update("/Projects/vault/wiki/a.md", after1, r0)
+    after2 = ("a\n## X\n" + marker(7, "2026-09-11") + "\n- c1\n" + marker(8, "2026-09-11") + "\n- c2\nb\n").encode()
+    r2 = store.update("/Projects/vault/wiki/a.md", after2, r1)
+    rid = j.start_run("distill", [7, 8])
+    op1 = j.add_op(rid, 7, "wiki/a.md", "update", r0, "s1"); j.confirm_op(op1, r1)
+    op2 = j.add_op(rid, 8, "wiki/a.md", "update", r1, "s2"); j.confirm_op(op2, r2); j.finish_run(rid, "ok", {})
+    res = undo_run(rid, store, j, cfg)
+    assert len(res["reverted"]) == 1 and res["reverted"][0] == "wiki/a.md"
+    assert store.download("/Projects/vault/wiki/a.md")[0] == b"a\n## X\nb\n"
+
+def test_strip_supersede_with_parens():
+    """Parens in supersede note don't break regex."""
+    t = "old ~~velho~~ (superado em 2026-09-11, ver r1: nota (com parenteses) aqui)\n"
+    assert strip_markers(t, [1]) == "old velho\n"
+
+def test_strip_catalog_row_and_log_line():
+    """Catalog row and log line with marker are removed."""
+    t = "- item <!-- r7 -->\n- 2026-09-11 r7 action\ntext\n"
+    assert strip_markers(t, [7]) == "text\n"
+
+def test_undo_unchanged_not_written(tmp_path):
+    """If stripping changes nothing, don't write, report in unchanged."""
+    store = make_store(); cfg = Config(); j = Journal(tmp_path / "j.db")
+    r0 = store.add("/Projects/vault/wiki/a.md", b"a\n## X\nb\n")
+    r1 = store.update("/Projects/vault/wiki/a.md", b"a\n## X\nb\n", r0)
+    rid = j.start_run("distill", [999]); op = j.add_op(rid, 999, "wiki/a.md", "update", r0, "s"); j.confirm_op(op, r1)
+    res = undo_run(rid, store, j, cfg)
+    assert res["unchanged"] == ["wiki/a.md"] and res["reverted"] == [] and res["skipped"] == []
+    assert store.download("/Projects/vault/wiki/a.md")[0] == b"a\n## X\nb\n"
