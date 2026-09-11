@@ -2,12 +2,14 @@ FROM python:3.12-slim-bookworm
 ENV DEBIAN_FRONTEND=noninteractive PIP_NO_CACHE_DIR=1 TZ=America/Sao_Paulo
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ffmpeg poppler-utils git curl ca-certificates tinyproxy gosu tzdata \
+      ffmpeg poppler-utils git curl ca-certificates tinyproxy gosu tzdata unzip \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && npm i -g @anthropic-ai/claude-code \
     && curl -fsSL https://downloads.rclone.org/rclone-current-linux-amd64.deb -o /tmp/rclone.deb \
     && apt-get install -y /tmp/rclone.deb && rm /tmp/rclone.deb \
+    && curl -fsSL https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip -o /tmp/deno.zip \
+    && unzip -q /tmp/deno.zip -d /usr/local/bin && rm /tmp/deno.zip && chmod 755 /usr/local/bin/deno \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g 10001 app       && useradd -u 10001 -g app       -m -d /home/app app \
     && groupadd -g 10002 app-fetch && useradd -u 10002 -g app-fetch -M -s /usr/sbin/nologin app-fetch \

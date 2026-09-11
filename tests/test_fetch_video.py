@@ -58,3 +58,19 @@ def test_fetch_video_duration_over_limit_skips_download_and_frames(tmp_path, mon
     r = fetch_video("https://tiktok.com/@u/video/2", tmp_path, cfg, "gk", "tiktok")
     assert r.method == "none" and str(cfg.media_max_min) in (r.error or "")
     assert r.frames == [] and downloads == []
+
+
+def test_fetch_video_channel_or_playlist_short_circuits(tmp_path, monkeypatch):
+    # canal/playlist salvo no Raindrop (ex. youtube.com/@linkingyourthinking/videos, 143 vídeos) fazia o yt-dlp
+    # percorrer o canal inteiro (~5 min por tentativa, tudo bot-wall). Não é um vídeo: sem rede, método "none".
+    from lib.fetch_video import is_channel_or_playlist
+    for u in ["https://www.youtube.com/@linkingyourthinking/videos", "https://youtube.com/@bath_interferometers",
+              "https://www.youtube.com/channel/UCxyz", "https://www.youtube.com/c/Nome", "https://www.youtube.com/user/nome",
+              "https://www.youtube.com/playlist?list=PLabc"]:
+        assert is_channel_or_playlist(u), u
+    for u in ["https://www.youtube.com/watch?v=abc&list=PLabc", "https://youtu.be/abc", "https://www.youtube.com/shorts/abc"]:
+        assert not is_channel_or_playlist(u), u
+    def boom(*a, **k): raise AssertionError("yt-dlp não pode ser chamado para canal")
+    monkeypatch.setattr("lib.fetch_video.fetch_captions", boom)
+    r = fetch_video("https://www.youtube.com/@linkingyourthinking/videos", tmp_path, Config(), "gk", "youtube")
+    assert r.method == "none" and "canal" in r.error

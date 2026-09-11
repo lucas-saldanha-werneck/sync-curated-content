@@ -4,6 +4,7 @@ Os módulos vendorados em lib/video/ não se importam entre si (só stdlib), ent
 não precisamos do truque de sys.path — import qualificado normal basta.
 """
 from __future__ import annotations
+import re
 import subprocess
 from pathlib import Path
 
@@ -59,10 +60,21 @@ def extract_frames(video_path: str, out_dir: Path, max_frames: int) -> list[tupl
     return [(Path(f["path"]).name, Path(f["path"]).read_bytes()) for f in frames]
 
 
+_CHANNEL_RE = re.compile(r"youtube\.com/(?:@[^/?#]+|channel/|c/|user/|playlist(?:[?#]|$))", re.I)
+
+
+def is_channel_or_playlist(url: str) -> bool:
+    """Página de canal/playlist do YouTube: não é um vídeo. Sem isso o yt-dlp percorre o canal inteiro
+    (143 vídeos = ~5 min por tentativa, tudo bot-wall) — visto em produção 2026-09-11."""
+    return bool(_CHANNEL_RE.search(url or ""))
+
+
 def fetch_video(url: str, work: Path, cfg, groq_key: str, platform: str, run=subprocess.run,
                 groq_seconds_used_today: int = 0, journal_add_groq=None) -> FetchResult:
     work = Path(work); work.mkdir(parents=True, exist_ok=True)
     r = FetchResult(platform=platform)
+    if is_channel_or_playlist(url):
+        return FetchResult(platform=platform, method="none", error="canal/playlist do YouTube, não é um vídeo: sem transcrição (só metadados)")
     try:
         cap = fetch_captions(url, work)
     except (Exception, SystemExit) as e:
