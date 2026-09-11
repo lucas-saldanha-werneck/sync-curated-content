@@ -8,7 +8,7 @@ CTRL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\u200b-\u200f\u2028\u2029\ufeff]")
 WIKILINK = re.compile(r"\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]")
 MDLINK = re.compile(r"\]\(([^)\s]+)\)")
 REFLINK = re.compile(r"^\s*\[[^\]]+\]:\s*(\S+)", re.M)
-BADSCHEME = re.compile(r"\b(javascript|data|file|obsidian|vbscript):", re.I)
+BADSCHEME = re.compile(r"\b(javascript|vbscript):|\b(data|file|obsidian):(//|[a-z]+/|[^\s]*base64)", re.I)
 URL = re.compile(r"https?://[^\s)\]]+")
 
 def validate_text(s: str, max_len: int, allowed_pages: set[str], source_url: str | None = None) -> str:

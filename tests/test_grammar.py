@@ -36,3 +36,15 @@ def test_curated_case_insensitive():
 def test_bare_bad_scheme_rejected():
     with pytest.raises(GrammarError):
         validate_text("Check this: javascript:alert(1)", 600, PAGES)
+
+def test_portuguese_data_word_allowed():
+    s = validate_text("data: 2026-09-10 — publicado", 600, PAGES)
+    assert "2026-09-10" in s
+
+def test_data_uri_rejected():
+    with pytest.raises(GrammarError):
+        validate_text("data:text/html;base64,AAAA", 600, PAGES)
+    with pytest.raises(GrammarError):
+        validate_text("file:///etc/passwd", 600, PAGES)
+    with pytest.raises(GrammarError):
+        validate_text("obsidian://open", 600, PAGES)
