@@ -41,6 +41,16 @@ def _tag(deps, iid, add, remove, note=None):
         deps.journal.upsert_item(iid, last_error=f"tag: {e}")
 
 
+def _retry_or_escalate(deps, cfg, res, iid, error_msg):
+    n = int((deps.journal.get_item(iid) or {}).get("retries") or 0) + 1
+    deps.journal.upsert_item(iid, retries=n, last_error=error_msg)
+    if n >= cfg.retry_max:
+        deps.records.write(iid, "erro", {"error": error_msg}); _tag(deps, iid, ["sr:erro"], ["sr:raw"])
+        res["items"][iid] = "erro"
+    else:
+        res["items"][iid] = "retry"
+
+
 def run_batch(item_ids: list[int], deps: BatchDeps, work: Path) -> dict:
     cfg = deps.cfg
     now = deps.now()
@@ -97,6 +107,7 @@ def run_batch(item_ids: list[int], deps: BatchDeps, work: Path) -> dict:
             if fresh and is_nowiki(fresh):
                 deps.records.write(iid, "nowiki", {}); res["items"][iid] = "nowiki"; manifest.per_item.pop(iid, None)
                 manifest.ops = [op for op in manifest.ops if not (op.item_ids == [iid])]
+                _tag(deps, iid, [], ["sr:raw"])
         try:
             apply(manifest, deps.store, deps.journal, cfg); break
         except ConflictError as e:
@@ -104,22 +115,35 @@ def run_batch(item_ids: list[int], deps: BatchDeps, work: Path) -> dict:
             snap = deps.snapshot.pull(); deps.undo_repo.commit_snapshot(snap, f"re-pull {run_id}"); manifest = None
     if manifest is None:
         res["status"] = "distill_conflict"; deps.journal.finish_run(run_id, "distill_conflict", res); return res
-    after = Snap({op.path: (op.after, op.rev_after) for op in manifest.ops})
-    deps.undo_repo.commit_snapshot(Snap({**snap.files, **after.files}), f"push {run_id}")
+    merged = {**snap.files, **{op.path: (op.after, op.rev_after) for op in manifest.ops}}
+    deps.undo_repo.commit_snapshot(Snap(merged), f"push {run_id}")
+    final_content = {rel: data for rel, (data, _rev) in merged.items()}
     res["ops"] = len(manifest.ops); res["warnings"] += manifest.warnings
+    log_rel = cfg.log_curated_fmt.format(ym=today[:7])
     for iid, pi in manifest.per_item.items():
         info = items[iid]
         if pi["decision"] == "retry":
-            n = int((deps.journal.get_item(iid) or {}).get("retries") or 0) + 1
-            deps.journal.upsert_item(iid, retries=n, last_error=pi.get("error"))
-            if n >= cfg.retry_max:
-                deps.records.write(iid, "erro", {"error": pi.get("error")}); _tag(deps, iid, ["sr:erro"], ["sr:raw"]); res["items"][iid] = "erro"
-            else:
-                res["items"][iid] = "retry"
+            _retry_or_escalate(deps, cfg, res, iid, pi.get("error")); continue
+        # conclusão por CONTEÚDO, não só pelas ops desta rodada: um item pode já estar
+        # inteiramente refletido no vault (marcador/linha já presentes) sem gerar op nova
+        # nesta rodada (render idêntico / inserção idempotente) — sem isso o item ficaria
+        # "incompleto" para sempre, preso em "captured".
+        done = set(pi["done"])
+        marker_txt = f"curated:r{iid} "
+        for rel, data in final_content.items():
+            if (rel.startswith("wiki/") and rel.endswith(".md") and rel != cfg.catalog_page
+                    and not rel.startswith("wiki/log/") and marker_txt in data.decode("utf-8", "ignore")):
+                done.add("claims"); break
+        if f"<!-- r{iid} -->" in final_content.get(cfg.catalog_page, b"").decode("utf-8", "ignore"):
+            done.add("catalog")
+        if f" r{iid} " in final_content.get(log_rel, b"").decode("utf-8", "ignore"):
+            done.add("log")
+        pi["done"] = sorted(done)
+        missing = set(pi["required"]) - done
+        if missing:
+            res["warnings"].append(f"r{iid}: faltou {missing}")
+            _retry_or_escalate(deps, cfg, res, iid, f"incompleto: faltou {sorted(missing)}")
             continue
-        complete = set(pi["required"]) <= set(pi["done"])
-        if not complete:
-            res["items"][iid] = "incompleto"; res["warnings"].append(f"r{iid}: faltou {set(pi['required']) - set(pi['done'])}"); continue
         deps.records.write(iid, "distill", {"decision": pi["decision"], "pages": pi["pages"], "catalog": pi["catalog"], "raw": info["raw"], "date": today, "run_id": run_id})
         final = {"wiki": "wiki", "parcial": "parcial", "skip": "skip"}[pi["decision"]]
         deps.records.write(iid, final, {"pages": pi["pages"], "run_id": run_id, "reason": pi.get("reason")})

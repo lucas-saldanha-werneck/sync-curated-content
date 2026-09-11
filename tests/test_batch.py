@@ -68,3 +68,41 @@ def test_run_batch_dry_tags_skips_merge_tags(tmp_path, monkeypatch):
     deps, store, rd = make_deps(tmp_path)
     res = run_batch([1], deps, tmp_path / "work")
     assert res["items"][1] == "wiki" and rd.puts == []
+
+
+def test_already_applied_item_completes(tmp_path):
+    """Conteúdo já refletido no vault (marcador já presente) não gera op nova nesta
+    rodada — a conclusão precisa vir do CONTEÚDO final, não só das ops desta rodada."""
+    deps, store, rd = make_deps(tmp_path)
+    ym = datetime.now().strftime("%Y-%m")
+    page_path = "/Projects/vault/wiki/energia-e-recarga.md"
+    _, rev, _ = store.exists(page_path)
+    store.update(page_path, b"# Energia\n\n## Tarifa\n\n<!-- curated:r1 2026-01-01 -->\n- Ja existia essa claim.\n", rev)
+    store.add("/Projects/vault/wiki/ferramentas-e-ideias.md",
+               b"# Ferramentas e ideias\n\n| Data | Nome |\n|---|---|\n| 2026-01-01 | Old | <!-- r1 -->\n")
+    store.add(f"/Projects/vault/wiki/log/{ym}_curated.md",
+               f"# Log curated {ym}\n\n- 2026-01-01 r1 wiki: already done\n".encode())
+    res = run_batch([1], deps, tmp_path / "work")
+    assert res["items"][1] == "wiki"
+    deps.records.refresh(); assert deps.records.state(1) == "wiki"
+
+
+def test_incomplete_counts_retries_then_erro(tmp_path, monkeypatch):
+    """apply() que não deixa nada 'done' (ex.: escrita silenciosamente não persistiu)
+    conta como retry no journal e escala pra erro depois de cfg.retry_max tentativas."""
+    import lib.batch as batch_mod
+    deps, store, rd = make_deps(tmp_path)
+    cfg = deps.cfg
+
+    def fake_apply(manifest, store, journal, cfg):
+        manifest.ops = []       # nada realmente aplicado/tocado nesta rodada
+        return manifest
+
+    monkeypatch.setattr(batch_mod, "apply", fake_apply)
+    for _ in range(cfg.retry_max - 1):
+        res = run_batch([1], deps, tmp_path / "work")
+        assert res["items"][1] == "retry"
+    res = run_batch([1], deps, tmp_path / "work")
+    assert res["items"][1] == "erro"
+    assert rd.puts[-1][0] == ["sr:erro"] and "sr:raw" in rd.puts[-1][1]
+    deps.records.refresh(); assert deps.records.state(1) == "erro"
