@@ -1,5 +1,6 @@
 """Aplicador determinístico: valida a saída do modelo, monta operações com âncora exata e aplica via CAS."""
 from __future__ import annotations
+import re
 
 import hashlib
 from dataclasses import dataclass, field
@@ -30,6 +31,12 @@ class Manifest:
     ops: list = field(default_factory=list)
     per_item: dict = field(default_factory=dict)     # per_item[id] = {"decision","pages","catalog","required","done"}
     warnings: list = field(default_factory=list)
+
+
+def _one_line(text: str) -> str:
+    """Claim é UMA linha: o marcador `<!-- curated:rN -->` cobre só a linha seguinte (undo/idempotência dependem disso).
+    Quebras de linha viram espaço; cabeçalho markdown no início ("## ") cai — bullet não é título."""
+    return re.sub(r"^#+\s*", "", " ".join(text.split()))
 
 
 def marker(item_id: int, today: str) -> str:
@@ -124,7 +131,7 @@ def plan_ops(output: dict, snap: Snap, items: dict, cfg, run_id: str, today: str
                     page = c["page"]
                     if page in HUBS or page not in files:
                         raise GrammarError(f"página inválida: {page}")
-                    text = validate_text(c["text"], 600, pages_allowed, source_url=src)
+                    text = _one_line(validate_text(c["text"], 600, pages_allowed, source_url=src))
                     blocks.setdefault(page, []).append((c.get("anchor", ""), f"- {text} ([raw]({'../' + raw_rel}))"))
 
                 if it.get("new_page"):

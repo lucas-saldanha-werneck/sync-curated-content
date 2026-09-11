@@ -140,3 +140,17 @@ def test_render_catalog_ignores_entries_without_catalog():
     ]
     out = render_catalog(entries).decode("utf-8")
     assert "<!-- r2 -->" in out and "<!-- r1 -->" not in out
+
+
+def test_claim_is_always_one_line_so_undo_strips_it_whole():
+    # produção 2026-09-11: claim veio com "\n\nFonte: ..." (3 linhas sob 1 marcador); strip_markers só tira marcador+1 linha
+    # → undo deixou resíduo na página. Regra: claim é UMA linha (cabeçalho markdown no início também cai).
+    from lib.undo import strip_markers
+    out = json.loads(json.dumps(OUT))
+    out["items"][0]["claims"] = [{"page": "wiki/energia-e-recarga.md", "anchor": "## Tarifa",
+                                  "text": "## Matriz de decisão\n\nFonte: manual ASQ.\nTambém chamada de grade."}]
+    m = plan_ops(out, snap(), ITEMS, Config(), "run1", "2026-09-11", {"inversor", "solar"})
+    page = [o for o in m.ops if o.path == "wiki/energia-e-recarga.md"][0].after.decode("utf-8")
+    added = [l for l in page.splitlines() if l not in PAGE.decode("utf-8").splitlines()]
+    assert added == [marker(1, "2026-09-11"), "- Matriz de decisão Fonte: manual ASQ. Também chamada de grade. ([raw](../raw/curated/2026-09-10_youtube-fonte-a-r1.md))"]
+    assert strip_markers(page, [1]) == PAGE.decode("utf-8")
