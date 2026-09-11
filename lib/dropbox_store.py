@@ -8,11 +8,11 @@ from typing import Callable
 class ConflictError(Exception): ...
 
 def content_hash(data: bytes) -> str:
-    """Dropbox content hash: sha256 de cada bloco de 4 MiB, concatena os digests, sha256 do total."""
+    """Dropbox content hash: sha256 de cada bloco de 4 MiB, concatena os digests, sha256 do total.
+    Dados vazios têm zero blocos, então a concatenação é b"" e o hash é sha256(b"")."""
     block = 4 * 1024 * 1024; acc = b""
-    for i in range(0, max(len(data), 1), block):
+    for i in range(0, len(data), block):
         acc += hashlib.sha256(data[i:i + block]).digest()
-    if not data: acc = hashlib.sha256(b"").digest()
     return hashlib.sha256(acc).hexdigest()
 
 class TokenProvider:
