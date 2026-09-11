@@ -137,8 +137,11 @@ def plan_ops(output: dict, snap: Snap, items: dict, cfg, run_id: str, today: str
                 if it.get("new_page"):
                     np = it["new_page"]
                     rel = f"wiki/{np['name']}.md"
-                    if rel in files or rel in HUBS:
-                        raise GrammarError(f"página nova já existe: {rel}")
+                    already = files.get(rel)                                 # snapshot: bytearray da página, ou None
+                    if rel in HUBS or (already is not None and marker(iid, today).encode() not in bytes(already)):
+                        raise GrammarError(f"página nova já existe: {rel}")     # colisão real: existe e não tem o marcador deste item
+                    if already is not None:
+                        continue                                                # re-plan após conflito: este item já criou a página (idempotente, Codex #3)
                     body = validate_text(np["body"], 6000, pages_allowed | {np["name"]}, source_url=src)
                     summ = validate_text(np["summary"], 200, pages_allowed)
                     item_files[rel] = bytearray(f"# {np['name']}\n\n{summ}\n\n{marker(iid, today)}\n{body}\n".encode())
@@ -211,9 +214,12 @@ def plan_ops(output: dict, snap: Snap, items: dict, cfg, run_id: str, today: str
     if log_lines:
         log_rel = cfg.log_curated_fmt.format(ym=today[:7])
         old = files.get(log_rel, bytearray(f"# Log curated {today[:7]}\n\n".encode())).decode("utf-8")
-        files[log_rel] = bytearray((old.rstrip("\n") + "\n" + "\n".join(log_lines) + "\n").encode())
-        revs.setdefault(log_rel, None)
-        touched.setdefault(log_rel, set()).update(m.per_item.keys())
+        # idempotência: linha "- <data> r<id> ..." que já está no log (apply parcial + re-plan) não é reescrita
+        fresh = [ln for ln in log_lines if ln not in old.split("\n")]
+        if fresh:
+            files[log_rel] = bytearray((old.rstrip("\n") + "\n" + "\n".join(fresh) + "\n").encode())
+            revs.setdefault(log_rel, None)
+            touched.setdefault(log_rel, set()).update(m.per_item.keys())
 
     # ops
     for rel, ids in touched.items():

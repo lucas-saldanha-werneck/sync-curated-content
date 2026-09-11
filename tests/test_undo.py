@@ -73,3 +73,17 @@ def test_undo_via_apply_strips_every_item_of_the_op(tmp_path):
     assert sorted(op["item_id"] for op in j.ops(rid)) == [7, 8]
     res = undo_run(rid, store, j, cfg)
     assert res["reverted"] == ["wiki/a.md"] and store.download("/Projects/vault/wiki/a.md")[0] == before
+
+
+def test_undo_of_new_page_deletes_file(tmp_path):
+    # Codex #4: undo de página criada pelo lote deve APAGAR o arquivo (não deixar stub que bloqueia o nome pra sempre)
+    from lib.applier import Manifest, Op, apply
+    store = make_store(); cfg = Config(); j = Journal(tmp_path / "j.db")
+    body = ("# nova\n\nresumo\n\n" + marker(7, "2026-09-11") + "\ncorpo\n").encode()
+    rid = j.start_run("distill", [7])
+    m = Manifest(run_id=rid, ops=[Op(path="wiki/nova.md", kind="add", before=None, after=body, rev_before=None, item_ids=[7], delta_sha="s")])
+    apply(m, store, j, cfg); j.finish_run(rid, "ok", {})
+    assert store.exists("/Projects/vault/wiki/nova.md")[0]
+    res = undo_run(rid, store, j, cfg)
+    assert res["reverted"] == ["wiki/nova.md"]
+    assert store.exists("/Projects/vault/wiki/nova.md")[0] is False            # apagado de verdade

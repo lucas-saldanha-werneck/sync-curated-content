@@ -123,6 +123,11 @@ class DropboxStore:
         meta = self._call(lambda c: c.files_upload(data, path, mode=WM.update(rev), strict_conflict=True, content_hash=content_hash(data)))
         return meta.rev
 
+    def delete(self, path: str, rev: str) -> None:
+        # apaga com CAS: só remove se o rev bater (senão ConflictError). Usado pelo undo de página nova.
+        WM = self._modes()
+        self._call(lambda c: c.files_delete_v2(path, parent_rev=rev))
+
     def download(self, path: str) -> tuple[bytes, str]:
         meta, res = self._call(lambda c: c.files_download(path))
         return res.content, meta.rev

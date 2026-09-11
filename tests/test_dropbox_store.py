@@ -25,6 +25,11 @@ class FakeDbx:
     def files_get_metadata(self, path):
         if path not in self.files: raise FakeErr("not_found")
         return FakeMeta(self.files[path][1], content_hash(self.files[path][0]))
+    def files_delete_v2(self, path, parent_rev=None):
+        cur = self.files.get(path)
+        if cur is None: raise FakeErr("not_found")
+        if parent_rev is not None and cur[1] != parent_rev: raise FakeErr("conflict")
+        del self.files[path]; return FakeMeta(self._rev(), None)
     def files_list_folder(self, folder, recursive=True):
         class E:
             def __init__(s, p, d, r): s.path_display, s.rev, s.content_hash, s.size = p, r, content_hash(d), len(d)
@@ -130,3 +135,12 @@ def test_non_retryable_raises_immediately():
     with pytest.raises(TypeError):
         s.exists("/v/x")
     assert calls["n"] == 1
+
+
+def test_delete_removes_with_cas():
+    s = make()
+    r1 = s.add("/v/n.md", b"corpo")
+    with pytest.raises(ConflictError):
+        s.delete("/v/n.md", "rev-velho")                                        # rev errado não apaga
+    s.delete("/v/n.md", r1)
+    assert s.exists("/v/n.md")[0] is False

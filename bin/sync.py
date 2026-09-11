@@ -71,7 +71,8 @@ class App:
                 if res.get("status") == "split":
                     for iid in batch:
                         try:
-                            run_batch([iid], self.bat, self.work / "distill")
+                            sres = run_batch([iid], self.bat, self.work / "distill")
+                            shutil.rmtree(self.work / "distill" / sres["run_id"], ignore_errors=True)
                         except Exception as e:
                             self.journal.upsert_item(iid, last_error=f"batch: {e}")
             except Exception as e:

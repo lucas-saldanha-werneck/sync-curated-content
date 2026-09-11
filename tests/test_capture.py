@@ -82,3 +82,12 @@ def test_capture_get_failure_falls_back_to_item(tmp_path):
     d = Deps(cfg=cfg, raindrop=FakeRDGetFails(ITEM), store=store, records=Records(store, cfg), journal=Journal(tmp_path / "j.db"),
              fetch_fn=lambda it, work, cfg, secrets, journal: FetchResult(platform="youtube", text="conteudo", method="captions"), secrets={})
     assert capture_one(ITEM, d, tmp_path) == "captured"
+
+
+def test_capture_success_resets_retry_counter_for_distill_phase(tmp_path):
+    # Codex #2: captura e destilação compartilham a coluna `retries` do journal; captura que precisou de retries
+    # não pode gastar o orçamento da destilação (senão 1 tropeço na 1ª destilação já vira sr:erro).
+    d, store = deps(tmp_path, FetchResult(platform="youtube", text="c" * 40, method="captions"))
+    d.journal.upsert_item(ITEM["id"], state="retry", retries=2)                 # 2 retries de captura já gastos
+    assert capture_one(ITEM, d, tmp_path) == "captured"
+    assert (d.journal.get_item(ITEM["id"]) or {}).get("retries") == 0           # captura OK zera para a destilação

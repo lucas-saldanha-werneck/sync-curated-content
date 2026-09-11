@@ -38,19 +38,19 @@ def undo_run(run_id: str, store, journal, cfg) -> dict:
 
         data, _ = store.download(full)
         old = data.decode("utf-8")
-        # ids = all item_ids on path
         ids = sorted(set(op["item_id"] for op in path_ops))
-        new = strip_markers(old, ids)
-        # kind = "add" if ANY op was "add"
+        # página criada pelo lote: apaga o arquivo (não deixa stub que bloqueia o nome — Codex #4)
         if any(op["op"] == "add" for op in path_ops):
-            new = f"# removido por undo {run_id}\n"
+            store.delete(full, last_rev)
+            for op in path_ops:
+                oid = journal.add_op(urun, op["item_id"], path, "undo", last_rev, "")
+                journal.confirm_op(oid, "")
+            res["reverted"].append(path); continue
 
-        # If nothing changed, don't write and report in unchanged
+        new = strip_markers(old, ids)
         if new == old:
             res["unchanged"].append(path); continue
-
         rev = store.update(full, new.encode("utf-8"), last_rev)
-        # Record undo ops for each item_id on this path
         for op in path_ops:
             oid = journal.add_op(urun, op["item_id"], path, "undo", last_rev, "")
             journal.confirm_op(oid, rev)

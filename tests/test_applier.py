@@ -154,3 +154,34 @@ def test_claim_is_always_one_line_so_undo_strips_it_whole():
     added = [l for l in page.splitlines() if l not in PAGE.decode("utf-8").splitlines()]
     assert added == [marker(1, "2026-09-11"), "- Matriz de decisão Fonte: manual ASQ. Também chamada de grade. ([raw](../raw/curated/2026-09-10_youtube-fonte-a-r1.md))"]
     assert strip_markers(page, [1]) == PAGE.decode("utf-8")
+
+
+def test_new_page_already_created_by_this_item_is_idempotent_not_collision():
+    # Codex #3: em re-plan após ConflictError, a página nova que ESTE item já criou aparece no snapshot;
+    # não pode ser tratada como "página nova já existe" (isso jogava um item já concluído para retry).
+    out = json.loads(json.dumps(OUT))
+    out["items"][0]["decision"] = "wiki"
+    out["items"][0]["new_page"] = {"name": "nova-pagina", "summary": "resumo", "body": "corpo"}
+    out["items"][0]["claims"] = []
+    s0 = snap()
+    m1 = plan_ops(out, s0, ITEMS, Config(), "run1", "2026-09-11", {"inversor", "solar"})
+    created = [o for o in m1.ops if o.path == "wiki/nova-pagina.md"][0]
+    # simula o re-plan: a página já existe no snapshot, com o marcador deste item
+    s1 = Snap({**s0.files, "wiki/nova-pagina.md": (created.after, "revNP")})
+    m2 = plan_ops(out, s1, ITEMS, Config(), "run1", "2026-09-11", {"inversor", "solar"})  # não pode levantar
+    assert m2.per_item[1]["decision"] == "wiki"
+    assert not any(o.path == "wiki/nova-pagina.md" for o in m2.ops)              # idempotente: nada a reescrever
+
+
+def test_log_line_not_duplicated_on_replan():
+    # Opus should-fix: após apply parcial + re-plan (conflito CAS / SIGKILL), a linha do item já pode estar no log
+    out = json.loads(json.dumps(OUT))
+    s = snap()
+    m1 = plan_ops(out, s, ITEMS, Config(), "run1", "2026-09-11", {"inversor", "solar"})
+    log_op = [o for o in m1.ops if o.path.startswith("wiki/log/")][0]
+    # re-plan com o log já contendo a linha deste item (op da 1ª tentativa foi aplicada)
+    s2 = Snap({**s.files, log_op.path: (log_op.after, "revLOG")})
+    m2 = plan_ops(out, s2, ITEMS, Config(), "run1", "2026-09-11", {"inversor", "solar"})
+    log2 = [o for o in m2.ops if o.path.startswith("wiki/log/")]
+    body = (log2[0].after if log2 else s2.files[log_op.path][0]).decode("utf-8")
+    assert body.count("r1 wiki:") == 1                       # nunca 2 linhas do mesmo item

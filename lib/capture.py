@@ -41,7 +41,7 @@ def capture_one(item: dict, deps: Deps, work: Path) -> str:
         deps.records.write(iid, "meta", {"link": item["link"], "title": item.get("title"), "created": item.get("created"),
                                          "type": item.get("type"), "tags": item.get("tags"), "raindrop": item.get("raw")})
     if "captured" in kinds:
-        deps.journal.upsert_item(iid, state="captured"); return "captured"
+        deps.journal.upsert_item(iid, state="captured", retries=0); return "captured"   # zera p/ a destilação (Codex #2)
     plat = route(item["link"], item.get("type", "link"))
     fr: FetchResult = deps.fetch_fn(item, Path(work) / f"r{iid}", cfg, deps.secrets, deps.journal)
     retries = retry_number(kinds)
@@ -64,6 +64,6 @@ def capture_one(item: dict, deps: Deps, work: Path) -> str:
         except ConflictError: pass
     deps.records.write(iid, "captured", {"raw": raw_rel, "frames": frame_names, "method": fr.method, "platform": plat,
                                          "error": fr.error, "duration_s": fr.duration_s})
-    deps.journal.upsert_item(iid, state="captured", raw_path=raw_rel, link=item["link"], title=item.get("title"), created=item.get("created"))
+    deps.journal.upsert_item(iid, state="captured", retries=0, raw_path=raw_rel, link=item["link"], title=item.get("title"), created=item.get("created"))  # retries=0: destilação tem orçamento próprio (Codex #2)
     _tag(deps, iid, ["sr:raw"], ["sr:retry"])
     return "captured"
