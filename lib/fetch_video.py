@@ -18,11 +18,15 @@ def fetch_captions(url: str, out_dir: Path) -> dict:
     return _fetch_captions(url, Path(out_dir))
 
 
-def download_audio(url: str, out_dir: Path, max_min: int) -> str:
-    dl = _download_url(url, Path(out_dir), audio_only=True)
-    dur = float((dl.get("info") or {}).get("duration") or 0)
-    if dur and dur > max_min * 60:
-        raise RuntimeError(f"áudio de {dur/60:.0f} min > limite {max_min} min")
+def download_media(url: str, out_dir: Path, audio_only: bool, max_mb: int | None = None) -> str:
+    """Ponto único de download (áudio-only OU vídeo completo), com --max-filesize opcional.
+
+    fetch_video nunca baixa duas vezes: chama isto no máximo uma vez por
+    execução, e reaproveita o arquivo local resultante tanto para a
+    transcrição Groq (whisper.extract_audio funciona em qualquer arquivo de
+    mídia, vídeo incluso) quanto para os frames.
+    """
+    dl = _download_url(url, Path(out_dir), audio_only=audio_only, max_filesize_mb=max_mb)
     return dl["video_path"]
 
 
@@ -33,6 +37,8 @@ def groq_transcribe(audio_path: str, key: str) -> tuple[str, float]:
     (plan_chunks/split_audio, quando o áudio passa de 24 MB) + retry em 429
     internamente — é o entrypoint de alto nível do próprio módulo (usado pelo
     seu __main__), então não há necessidade de dirigir transcribe_chunks na mão.
+    audio_path pode ser um arquivo de áudio OU de vídeo — extract_audio extrai
+    a trilha de áudio de qualquer um dos dois via ffmpeg.
     """
     audio_out = Path(audio_path).with_suffix(".16k.mp3")
     segments, _backend = _whisper.transcribe_video(audio_path, audio_out, backend="groq", api_key=key)
@@ -40,19 +46,15 @@ def groq_transcribe(audio_path: str, key: str) -> tuple[str, float]:
     return format_transcript(segments), float(dur)
 
 
-def extract_frames(video_or_url: str, out_dir: Path, max_frames: int) -> list[tuple[str, bytes]]:
-    """Extrai frames via frames.extract_keyframes (tier "efficient": keyframes, near-instant).
+def extract_frames(video_path: str, out_dir: Path, max_frames: int) -> list[tuple[str, bytes]]:
+    """Extrai frames de um arquivo de vídeo LOCAL já baixado — sem rede aqui.
 
-    frames.py não expõe uma função única com um parâmetro "detail" nem aceita
-    URL — só um arquivo de vídeo local. Se video_or_url não for um arquivo já
-    existente em disco, baixa o vídeo real primeiro (fetch_captions, usado no
-    caminho de legendas, não baixa vídeo — só metadados/legenda).
+    Via frames.extract_keyframes (tier "efficient": keyframes, near-instant;
+    frames.py não expõe uma função única com parâmetro "detail"). Quem decide
+    baixar o vídeo (e reaproveitar um já baixado para a transcrição) é
+    fetch_video, através de download_media — extract_frames não baixa nada.
     """
     out_dir = Path(out_dir)
-    video_path = video_or_url if Path(video_or_url).exists() else None
-    if video_path is None:
-        dl = _download_url(video_or_url, out_dir / "src", audio_only=False)
-        video_path = dl["video_path"]
     frames, _meta = _frames.extract_keyframes(video_path, out_dir, max_frames=max_frames)
     return [(Path(f["path"]).name, Path(f["path"]).read_bytes()) for f in frames]
 
@@ -68,25 +70,42 @@ def fetch_video(url: str, work: Path, cfg, groq_key: str, platform: str, run=sub
     info = cap.get("info") or {}
     r.title, r.author = info.get("title"), info.get("uploader")
     r.duration_s = float(info["duration"]) if info.get("duration") else None
+
+    # Teto de duração checado ANTES de qualquer download (não depois) — a
+    # duração já é conhecida pelo passo de legendas, sem custo de rede extra.
+    too_long = bool(r.duration_s) and r.duration_s > cfg.media_max_min * 60
+    want_frames = cfg.frames_max > 0 and not too_long
+    media_path: str | None = None  # arquivo local já baixado, se algum — nunca baixa 2x
+
     if cap.get("subtitle_path"):
         r.text, r.method = format_transcript(parse_vtt(cap["subtitle_path"])), "captions"
+    elif too_long:
+        r.method, r.error = "none", f"duração {r.duration_s/60:.0f}min > limite {cfg.media_max_min}min"
     else:
         need = int(r.duration_s or 0) or 600
         if groq_seconds_used_today + need > cfg.groq_daily_seconds:
             r.method, r.error = "none", "groq_quota"
         else:
             try:
-                audio = download_audio(url, work, cfg.media_max_min)
-                r.text, secs = groq_transcribe(audio, groq_key); r.method = "groq"
+                # Se frames também serão extraídos, baixa o vídeo completo (não
+                # só áudio) para servir os dois usos com um download só.
+                media_path = download_media(url, work, audio_only=not want_frames, max_mb=cfg.media_max_mb)
+                r.text, secs = groq_transcribe(media_path, groq_key); r.method = "groq"
                 if journal_add_groq: journal_add_groq(int(secs))
             except (Exception, SystemExit) as e:
                 r.method, r.error = "none", f"groq/áudio: {e}"
-    if r.method != "none":
+
+    if want_frames and r.method != "none":
         # Sem transcrição (quota estourada ou falha) não vale a pena baixar o
         # vídeo inteiro só para frames — conserva banda/orçamento.
         try:
+            if media_path is None:
+                # Legendas já deram a transcrição — vídeo ainda não foi baixado.
+                media_path = download_media(url, work, audio_only=False, max_mb=cfg.media_max_mb)
             cap_n = cfg.frames_short_max if (r.duration_s or 0) < 60 else cfg.frames_max
-            r.frames = extract_frames(url, work / "frames", cap_n)
+            r.frames = extract_frames(media_path, work / "frames", cap_n)
         except (Exception, SystemExit) as e:
             r.extra["frames_error"] = str(e)
+    elif too_long:
+        r.extra["frames_skipped"] = "duration>max"
     return r

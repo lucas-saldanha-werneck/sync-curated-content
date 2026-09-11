@@ -119,6 +119,7 @@ def download_url(
     url: str,
     out_dir: Path,
     audio_only: bool = False,
+    max_filesize_mb: int | None = None,
 ) -> dict:
     if shutil.which("yt-dlp") is None:
         raise SystemExit("yt-dlp is not installed. Install with: brew install yt-dlp")
@@ -131,6 +132,7 @@ def download_url(
         "yt-dlp",
         *(["--proxy", os.environ["YTDLP_PROXY"]] if os.environ.get("YTDLP_PROXY") else []),
         *(["--extractor-args", "youtubepot-bgutilhttp:base_url=" + os.environ["YTDLP_POT_URL"]] if os.environ.get("YTDLP_POT_URL") else []),
+        *(["--max-filesize", f"{max_filesize_mb}M"] if max_filesize_mb else []),
         "-N", "8",
         "-f", fmt,
         "--merge-output-format", "mp4",

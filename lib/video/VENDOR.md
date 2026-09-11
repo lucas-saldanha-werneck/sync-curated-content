@@ -4,7 +4,7 @@ commit: 83da59fa78c3eee9e20f515fe75c438bb5166efd
 source: skills/watch/scripts/{download,transcribe,whisper,frames}.py + LICENSE
 files: download.py transcribe.py whisper.py frames.py LICENSE
 
-## Patches locais (2, ambos documentados abaixo)
+## Patches locais (3 — ver nota sobre o 3º abaixo)
 
 1. `download.py`: em cada `cmd = ["yt-dlp", ...]` (dentro de `fetch_captions` e de
    `download_url`), logo após `"yt-dlp",`, inserido:
@@ -18,6 +18,17 @@ files: download.py transcribe.py whisper.py frames.py LICENSE
    então este é o hook para um serviço rodando nessa URL.
 
 2. `whisper.py`: `GROQ_MODEL = "whisper-large-v3"` → `GROQ_MODEL = "whisper-large-v3-turbo"`.
+
+3. **(fix round 1, adicionado por instrução explícita do team-lead na revisão — excede o teto de "2 patches"
+   da tarefa original; documentado aqui para auditoria, não decidido unilateralmente)** `download.py`:
+   `download_url()` ganhou um parâmetro `max_filesize_mb: int | None = None`, inserindo, no mesmo padrão
+   condicional dos patches 1/2, logo após eles no `cmd`:
+   ```python
+   *(["--max-filesize", f"{max_filesize_mb}M"] if max_filesize_mb else []),
+   ```
+   Motivo: a revisão do task 8 pediu um teto de tamanho de download (`cfg.media_max_mb`) como segunda linha de
+   defesa além do teto de duração (que já é checado ANTES de qualquer download em `fetch_video`, usando
+   `r.duration_s` obtido no passo de legendas) — cobre o caso de metadado de duração ausente/errado.
 
 Nada além disso foi alterado nos arquivos vendorados.
 
