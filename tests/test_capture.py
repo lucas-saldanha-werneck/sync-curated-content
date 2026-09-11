@@ -4,6 +4,7 @@ from lib.config import Config
 from lib.records import Records
 from lib.journal import Journal
 from lib.fetch_types import FetchResult
+from lib.rawwriter import raw_relpath
 from tests.test_dropbox_store import make as make_store
 
 ITEM = {"id": 5, "link": "https://youtu.be/x", "title": "Vídeo", "excerpt": "", "note": "", "tags": ["a"], "type": "video",
@@ -51,3 +52,33 @@ def test_capture_dry_tags_skips_merge_tags(tmp_path, monkeypatch):
     d, store = deps(tmp_path, FetchResult(platform="youtube", text="conteudo", method="captions"))
     assert capture_one(ITEM, d, tmp_path) == "captured"
     assert d.raindrop.puts == []
+
+def _seed_raw(store, path, content):
+    store.exists(path)                          # força criação do client fake (lazy)
+    store._client.files[path] = (content, "rev-seed")
+
+def test_capture_raw_name_collision_other_id(tmp_path):
+    d, store = deps(tmp_path, FetchResult(platform="youtube", text="conteudo", method="captions"))
+    raw_path = d.cfg.vault_path(raw_relpath(ITEM, "youtube", d.cfg.tz))
+    _seed_raw(store, raw_path, b"---\nraindrop_id: 999\n---\nx")
+    assert capture_one(ITEM, d, tmp_path) == "erro"
+    assert any(p.endswith("r5.erro.json") for p in store._client.files)
+    assert d.raindrop.puts[-1] == (["sr:erro"], ["sr:raw", "sr:retry"])
+    assert not any(p.endswith("r5.captured.json") for p in store._client.files)
+
+def test_capture_raw_exists_same_id_is_accepted(tmp_path):
+    d, store = deps(tmp_path, FetchResult(platform="youtube", text="conteudo", method="captions"))
+    raw_path = d.cfg.vault_path(raw_relpath(ITEM, "youtube", d.cfg.tz))
+    seeded = b"---\nraindrop_id: 5\n---\nx"
+    _seed_raw(store, raw_path, seeded)
+    assert capture_one(ITEM, d, tmp_path) == "captured"
+    assert store._client.files[raw_path][0] == seeded
+
+class FakeRDGetFails(FakeRD):
+    def get(self, i): raise RuntimeError("deleted")
+
+def test_capture_get_failure_falls_back_to_item(tmp_path):
+    store = make_store(); cfg = Config()
+    d = Deps(cfg=cfg, raindrop=FakeRDGetFails(ITEM), store=store, records=Records(store, cfg), journal=Journal(tmp_path / "j.db"),
+             fetch_fn=lambda it, work, cfg, secrets, journal: FetchResult(platform="youtube", text="conteudo", method="captions"), secrets={})
+    assert capture_one(ITEM, d, tmp_path) == "captured"

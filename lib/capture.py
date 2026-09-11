@@ -30,7 +30,10 @@ def _tag(deps, item_id, add, remove, note=None):
 
 def capture_one(item: dict, deps: Deps, work: Path) -> str:
     iid = item["id"]; cfg = deps.cfg
-    fresh = deps.raindrop.get(iid) or item
+    try:
+        fresh = deps.raindrop.get(iid) or item
+    except Exception:
+        fresh = item                          # item sumiu do Raindrop (deletado) etc: segue com o que a fila trouxe
     if is_nowiki(fresh):
         deps.records.write(iid, "nowiki", {"link": item["link"]}); deps.journal.upsert_item(iid, state="nowiki"); return "nowiki"
     kinds = deps.records.kinds(iid)
