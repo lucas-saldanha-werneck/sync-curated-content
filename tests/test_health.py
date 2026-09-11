@@ -17,8 +17,14 @@ def test_all_ok(tmp_path):
 def test_stale_poll_and_old_pending_fail(tmp_path):
     j, now = base(tmp_path)
     j.upsert_item(9, state="captured", created=(now - timedelta(days=2)).isoformat())
+    j.con.execute("UPDATE items SET updated_at=? WHERE id=?", ((now - timedelta(days=2)).isoformat(), 9))
+    j.con.commit()
     h = run_checks(j, {9: {"meta", "captured"}}, Config(), now, now - timedelta(minutes=5), 60.0, now, tmp_path)
     assert not h.ok and not h.checks["loop_vivo"][0] and not h.checks["pendencia_velha"][0]
+    # Item with old created but fresh updated_at should NOT be flagged
+    j.upsert_item(10, state="captured", created=(now - timedelta(days=2)).isoformat())
+    h = run_checks(j, {9: {"meta", "captured"}, 10: {"meta", "captured"}}, Config(), now, now - timedelta(minutes=5), 60.0, now, tmp_path)
+    assert not h.checks["pendencia_velha"][0] and "9" in h.checks["pendencia_velha"][1] and "10" not in h.checks["pendencia_velha"][1]
 
 def test_conflict_run_fails_until_ok_after(tmp_path):
     j, now = base(tmp_path)

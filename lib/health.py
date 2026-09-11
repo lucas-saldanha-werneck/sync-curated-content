@@ -18,10 +18,10 @@ def run_checks(journal, records_map, cfg, now, last_poll_ts, disk_free_pct, auth
     old = []
     for st in ("captured", "retry"):
         for it in journal.items_in_state(st):
-            try: created = datetime.fromisoformat(it["created"])
+            try: updated_at = datetime.fromisoformat(it["updated_at"])
             except Exception: continue
-            if created.tzinfo is None: created = created.replace(tzinfo=now.tzinfo)
-            if now - created > timedelta(hours=24) and terminal_state(records_map.get(it["id"], set())) is None: old.append(it["id"])
+            if updated_at.tzinfo is None: updated_at = updated_at.replace(tzinfo=now.tzinfo)
+            if now - updated_at > timedelta(hours=24) and terminal_state(records_map.get(it["id"], set())) is None: old.append(it["id"])
     c["pendencia_velha"] = (not old, f"{len(old)} itens > 24 h: {old[:5]}")
     runs = [dict(r) for r in journal.con.execute("SELECT * FROM runs WHERE kind='distill' ORDER BY started")]
     bad_open = False
