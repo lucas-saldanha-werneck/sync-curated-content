@@ -1,6 +1,6 @@
 """Saúde: checks reais antes de qualquer ping; status.md legível; prova de auth do Claude."""
 from __future__ import annotations
-import json, os, shutil, subprocess, urllib.request
+import json, os, subprocess, urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -62,7 +62,7 @@ def status_md(journal, records_map, cfg, h: Health, groq_used: int) -> str:
 def claude_auth_probe(cfg, token: str, runner=subprocess.run) -> tuple[bool, str]:
     env = {"CLAUDE_CODE_OAUTH_TOKEN": token, "CLAUDE_CONFIG_DIR": "/tmp/cc-probe", "HOME": "/tmp", "PATH": os.environ.get("PATH", ""), "TZ": cfg.tz}
     try:
-        p = runner(["claude", "-p", "Responda só: ok", "--model", cfg.claude_model, "--max-turns", "1", "--output-format", "text"], env=env, capture_output=True, text=True, timeout=120, preexec_fn=_preexec_as_app_claude)
+        p = runner(["claude", "-p", "Responda só: ok", "--model", cfg.claude_model, "--max-turns", "1", "--output-format", "text"], env=env, capture_output=True, text=True, timeout=120, preexec_fn=_preexec_as_app_claude())
     except Exception as e:
         return False, str(e)
     return (p.returncode == 0 and "ok" in (p.stdout or "").lower()), (p.stderr or p.stdout)[-300:]

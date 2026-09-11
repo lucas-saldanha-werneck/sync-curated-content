@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from pathlib import Path
 import json
-from lib.health import run_checks, write_health_files, ping_uptimerobot, status_md
+from lib.health import run_checks, write_health_files, ping_uptimerobot, status_md, claude_auth_probe
 from lib.journal import Journal
 from lib.config import Config
 
@@ -36,3 +36,11 @@ def test_files_and_ping(tmp_path):
     assert ping_uptimerobot("https://hb/x", h, opener=lambda u, timeout=10: pinged.append(u) or type("R", (), {"status": 200})()) and pinged
     h.ok = False; assert not ping_uptimerobot("https://hb/x", h, opener=lambda u, timeout=10: pinged.append(u)) and len(pinged) == 1
     md = status_md(j, {}, Config(), h, 120); assert "Groq hoje:" in md and "| estado |" in md.lower() or "estado" in md.lower()
+
+def test_auth_probe_passes_preexec_closure():
+    captured_kwargs = {}
+    def fake_runner(cmd, **kw):
+        captured_kwargs.update(kw)
+        return type("R", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
+    claude_auth_probe(Config(), "token", runner=fake_runner)
+    assert callable(captured_kwargs["preexec_fn"]) and captured_kwargs["preexec_fn"].__name__ == "_switch"
