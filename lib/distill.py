@@ -8,17 +8,33 @@ from lib.snapshot import Snap
 class DistillError(Exception): ...
 
 
-DENY = ["Read(/**)", "Read(//**)", "Read(~/**)", "Read(/proc/**)", "Read(/etc/**)", "Read(/run/**)", "Read(/var/**)", "Read(/tmp/**)",
+# Read(/**) NÃO entra: negaria tudo (o próprio workspace vive sob um path absoluto,
+# cfg.work_dir/distill/<run_id>). Read(/var/**) e Read(/tmp/**) também não: o workspace real
+# fica em /var/lib/sync-raindrop/distill/<run_id> — deny bate allow no Claude Code, então uma
+# regra genérica de /var/** bloquearia o Claude de ler o próprio workspace que ele deveria ler.
+# Em vez disso, nega hosts/paths específicos fora do workspace.
+DENY = ["Read(//**)", "Read(~/**)", "Read(/proc/**)", "Read(/etc/**)", "Read(/run/**)", "Read(/secrets/**)",
+        "Read(/root/**)", "Read(/home/**)", "Read(/opt/**)", "Read(/public/**)",
+        "Read(/var/lib/sync-raindrop/journal.db*)", "Read(/var/lib/sync-raindrop/wiki-git/**)",
+        "Read(/var/lib/sync-raindrop/runs/**)", "Read(/var/lib/sync-raindrop/capture/**)",
         "Bash(*)", "Write(*)", "Edit(*)", "WebFetch(*)", "WebSearch(*)", "NotebookEdit(*)"]
 
 
-def _app_claude_ids() -> tuple[int, int] | None:
-    """uid/gid de app-claude, se esse usuário existir neste host; None caso contrário (Mac/dev/testes)."""
+def _app_claude_pw():
+    """pwd.struct_passwd de app-claude neste host, ou None se o usuário não existir (Mac/dev/testes).
+
+    Único ponto que chama pwd.getpwnam("app-claude") — tanto o chown de build_workspace quanto
+    o preexec_fn de run_claude passam por aqui.
+    """
     try:
-        pw = pwd.getpwnam("app-claude")
+        return pwd.getpwnam("app-claude")
     except KeyError:
         return None
-    return pw.pw_uid, pw.pw_gid
+
+
+def _app_claude_ids() -> tuple[int, int] | None:
+    pw = _app_claude_pw()
+    return (pw.pw_uid, pw.pw_gid) if pw else None
 
 
 def _preexec_as_app_claude():
@@ -26,14 +42,16 @@ def _preexec_as_app_claude():
 
     A checagem acontece dentro do callable (não na hora de montá-lo) porque o preexec_fn
     só é de fato executado no filho, após o fork — em Mac/testes ele nunca roda de verdade
-    (o runner é injetado), então KeyError/PermissionError aqui nunca aparecem lá.
+    (o runner é injetado), então a ausência de app-claude nunca derruba os testes.
     """
     def _switch():
+        pw = _app_claude_pw()
+        if pw is None:
+            return
         try:
-            pw = pwd.getpwnam("app-claude")
             os.setgid(pw.pw_gid)
             os.setuid(pw.pw_uid)
-        except (KeyError, PermissionError):
+        except PermissionError:
             pass
     return _switch
 
