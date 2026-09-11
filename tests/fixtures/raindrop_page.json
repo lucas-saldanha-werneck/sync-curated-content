@@ -1,0 +1,8 @@
+{"result": true, "items": [
+ {"_id": 1001, "link": "https://www.youtube.com/watch?v=abc", "title": "Vídeo A", "excerpt": "desc", "note": "", "tags": ["dev"],
+  "type": "video", "created": "2026-09-10T12:00:00.000Z", "lastUpdate": "2026-09-10T12:00:00.000Z", "cover": "https://i/x.jpg",
+  "domain": "youtube.com", "collection": {"$id": -1}},
+ {"_id": 1000, "link": "https://blog.example.com/post", "title": "Post B", "excerpt": "", "note": "ver depois", "tags": ["sr:wiki", "x"],
+  "type": "article", "created": "2026-09-09T12:00:00.000Z", "lastUpdate": "2026-09-09T12:00:00.000Z", "cover": "", "domain": "blog.example.com",
+  "collection": {"$id": 5}}
+], "count": 2}

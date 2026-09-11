@@ -1,0 +1,19 @@
+{
+  "vault_root": "/Projects/vault",
+  "curated_dir": "raw/curated",
+  "catalog_dir": "raw/curated/_catalog",
+  "state_dir": "raw/curated/_state",
+  "wiki_dir": "wiki",
+  "log_curated_fmt": "wiki/log/{ym}_curated.md",
+  "catalog_page": "wiki/ferramentas-e-ideias.md",
+  "work_dir": "/var/lib/sync-raindrop",
+  "tz": "America/Sao_Paulo",
+  "poll_seconds": 30,
+  "batch_min_items": 5, "batch_max_wait_min": 15, "batch_max_items": 5, "max_batches_per_day": 12,
+  "max_files_per_batch": 10, "max_delta_bytes": 8192, "max_images_per_batch": 30, "frames_max": 6, "frames_short_max": 3,
+  "media_max_mb": 200, "media_max_min": 30, "pdf_max_pages": 60, "queue_max": 200, "groq_daily_seconds": 28800,
+  "claude_model": "claude-fable-5-1", "claude_timeout_s": 900, "fetch_timeout_s": 600,
+  "types_vocab": ["skill", "plugin", "ferramenta", "metodo", "ideia", "conteudo"],
+  "triggers_vocab_path": "config/triggers.txt",
+  "retry_max": 3
+}
