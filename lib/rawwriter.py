@@ -5,7 +5,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from lib.fetch_types import FetchResult
 
-CTRL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f​-‏  ﻿]")
+CTRL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\u200b-\u200f\u2028\u2029\ufeff]")
 
 def sanitize_control_chars(s: str) -> str:
     return CTRL.sub("", s or "")

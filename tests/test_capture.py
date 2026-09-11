@@ -35,7 +35,7 @@ def test_capture_failure_goes_retry_then_partial(tmp_path):
     d.records.refresh()
     assert capture_one(ITEM, d, tmp_path) == "captured"          # 4ª vez: 3 retries feitos → raw só de metadados
     md = [v[0] for p, v in store._client.files.items() if p.endswith("-r5.md")][0].decode()
-    assert "transcript_method: none" in md
+    assert 'transcript_method: "none"' in md
 
 def test_capture_nowiki_revalidated(tmp_path):
     d, store = deps(tmp_path, FetchResult(platform="youtube", text="x", method="captions"), item={**ITEM, "tags": ["nowiki"]})
