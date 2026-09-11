@@ -70,7 +70,8 @@ def is_channel_or_playlist(url: str) -> bool:
 
 
 def fetch_video(url: str, work: Path, cfg, groq_key: str, platform: str, run=subprocess.run,
-                groq_seconds_used_today: int = 0, journal_add_groq=None) -> FetchResult:
+                groq_seconds_used_today: int = 0, journal_add_groq=None,
+                apify_token: str | None = None, apify_opener=None) -> FetchResult:
     work = Path(work); work.mkdir(parents=True, exist_ok=True)
     r = FetchResult(platform=platform)
     if is_channel_or_playlist(url):
@@ -78,8 +79,9 @@ def fetch_video(url: str, work: Path, cfg, groq_key: str, platform: str, run=sub
     try:
         cap = fetch_captions(url, work)
     except (Exception, SystemExit) as e:
-        return FetchResult(platform=platform, method="none", error=f"yt-dlp: {e}")
-    info = cap.get("info") or {}
+        # NÃO retorna aqui: cai no failover do Apify no fim (yt-dlp bloqueado por IP de datacenter)
+        cap, r.method, r.error = None, "none", f"yt-dlp: {e}"
+    info = (cap.get("info") if cap else None) or {}
     r.title, r.author = info.get("title"), info.get("uploader")
     r.duration_s = float(info["duration"]) if info.get("duration") else None
 
@@ -89,7 +91,9 @@ def fetch_video(url: str, work: Path, cfg, groq_key: str, platform: str, run=sub
     want_frames = cfg.frames_max > 0 and not too_long
     media_path: str | None = None  # arquivo local já baixado, se algum — nunca baixa 2x
 
-    if cap.get("subtitle_path"):
+    if cap is None:
+        pass                                  # yt-dlp falhou: pula a transcrição e vai ao failover
+    elif cap.get("subtitle_path"):
         r.text, r.method = format_transcript(parse_vtt(cap["subtitle_path"])), "captions"
     elif too_long:
         r.method, r.error = "none", f"duração {r.duration_s/60:.0f}min > limite {cfg.media_max_min}min"
@@ -120,4 +124,42 @@ def fetch_video(url: str, work: Path, cfg, groq_key: str, platform: str, run=sub
             r.extra["frames_error"] = str(e)
     elif too_long:
         r.extra["frames_skipped"] = "duration>max"
+
+    # Failover: yt-dlp é o PRIMÁRIO (grátis, via nossa Groq + frames). Só se ele não produziu transcrição
+    # (IP de datacenter bloqueado, quota, etc.) e for YouTube, cai no Apify (residencial embutido).
+    # Quando a UDM-VPN entrar, o yt-dlp passa a funcionar da VPS e este bloco raramente roda.
+    if platform == "youtube" and r.method == "none" and getattr(cfg, "youtube_apify_fallback", True) and apify_token:
+        ya = fetch_youtube_apify(url, cfg, apify_token, opener=apify_opener)
+        if ya.method != "none":
+            ya.extra["ytdlp_error"] = r.error
+            return ya
+        r.extra["apify_error"] = ya.error
     return r
+
+
+def fetch_youtube_apify(url: str, cfg, apify_token: str, opener=None) -> FetchResult:
+    """Failover do YouTube via ator Apify (legenda primeiro, Whisper deles como último recurso, limitado).
+
+    Apify roda em infra com proxy residencial, então passa onde o IP de datacenter da VPS é bloqueado
+    (pesquisa 2026-09-11). Legenda ~US$0,001/vídeo; AI limitada por maxAiMinutes/skipAiFallbackIfLongerThan."""
+    from lib.fetch_social import apify_run_sync
+    if is_channel_or_playlist(url):
+        return FetchResult(platform="youtube", method="none", error="canal/playlist: não chama Apify")
+    payload = {"startUrls": [{"url": url}], "enableAiFallback": True,
+               "maxAiMinutes": cfg.media_max_min, "skipAiFallbackIfLongerThan": cfg.media_max_min,
+               "outputFormats": ["text"]}
+    try:
+        items = apify_run_sync(cfg.youtube_apify_actor, apify_token, payload, opener=opener)
+    except Exception as e:
+        return FetchResult(platform="youtube", method="none", error=f"apify: {e}")
+    if not isinstance(items, list) or not items:
+        return FetchResult(platform="youtube", method="none", error=f"apify: resposta inválida: {str(items)[:120]}")
+    it = items[0]; meta = it.get("metadata") or {}
+    text = (it.get("transcript_text") or "").strip()
+    if not text:
+        return FetchResult(platform="youtube", method="none", error="apify: sem transcrição")
+    method = "apify-whisper" if it.get("is_ai_generated") else "apify-captions"
+    dur = meta.get("duration")
+    return FetchResult(platform="youtube", method=method, text=text,
+                       title=meta.get("title"), author=meta.get("channel"),
+                       duration_s=float(dur) if isinstance(dur, (int, float)) else None)

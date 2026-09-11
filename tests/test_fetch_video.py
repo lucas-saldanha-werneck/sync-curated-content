@@ -74,3 +74,64 @@ def test_fetch_video_channel_or_playlist_short_circuits(tmp_path, monkeypatch):
     monkeypatch.setattr("lib.fetch_video.fetch_captions", boom)
     r = fetch_video("https://www.youtube.com/@linkingyourthinking/videos", tmp_path, Config(), "gk", "youtube")
     assert r.method == "none" and "canal" in r.error
+
+
+# --- YouTube via Apify: failover atrás do yt-dlp (yt-dlp primário; UDM-VPN futura mantém yt-dlp na frente) ---
+
+def _apify_opener(record):
+    import json as _j
+    calls = {"n": 0}
+    def opener(url, **k):
+        calls["n"] += 1
+        return (_j.dumps([record]).encode(), url, {})
+    opener.calls = calls
+    return opener
+
+def test_youtube_apify_fallback_when_ytdlp_blocked(tmp_path, monkeypatch):
+    cfg = Config()
+    def blocked(url, out_dir): raise RuntimeError("Sign in to confirm you're not a bot")
+    monkeypatch.setattr("lib.fetch_video.fetch_captions", blocked)
+    rec = {"metadata": {"title": "T ap", "channel": "Canal", "duration": 120}, "language": "en",
+           "is_auto_generated": True, "is_ai_generated": False, "transcript_text": "conteudo da legenda " * 5}
+    op = _apify_opener(rec)
+    r = fetch_video("https://www.youtube.com/watch?v=abc", tmp_path, cfg, "gk", "youtube", apify_token="tok", apify_opener=op)
+    assert r.method.startswith("apify") and "conteudo da legenda" in r.text and r.title == "T ap" and r.author == "Canal"
+    assert op.calls["n"] == 1
+
+def test_youtube_ytdlp_primary_apify_not_called(tmp_path, monkeypatch):
+    cfg = Config()
+    def ok_caps(url, out_dir):
+        (Path(out_dir) / "v.en.vtt").write_text((FIX / "sample.vtt").read_text())
+        return {"subtitle_path": str(Path(out_dir) / "v.en.vtt"), "info": {"title": "T", "uploader": "U", "duration": 42}}
+    monkeypatch.setattr("lib.fetch_video.fetch_captions", ok_caps)
+    monkeypatch.setattr("lib.fetch_video.extract_frames", lambda *a, **k: [])
+    op = _apify_opener({"transcript_text": "nao deveria usar"})
+    r = fetch_video("https://www.youtube.com/watch?v=abc", tmp_path, cfg, "gk", "youtube", apify_token="tok", apify_opener=op)
+    assert r.method == "captions" and op.calls["n"] == 0          # yt-dlp na frente; Apify não é chamado
+
+def test_youtube_channel_never_calls_apify(tmp_path):
+    op = _apify_opener({"transcript_text": "x"})
+    r = fetch_video("https://www.youtube.com/@canal/videos", tmp_path, Config(), "gk", "youtube", apify_token="tok", apify_opener=op)
+    assert r.method == "none" and op.calls["n"] == 0             # canal não vira crawl no Apify
+
+def test_youtube_apify_empty_transcript_is_none(tmp_path, monkeypatch):
+    def blocked(url, out_dir): raise RuntimeError("bot")
+    monkeypatch.setattr("lib.fetch_video.fetch_captions", blocked)
+    op = _apify_opener({"metadata": {"title": "T"}, "transcript_text": ""})
+    r = fetch_video("https://www.youtube.com/watch?v=abc", tmp_path, Config(), "gk", "youtube", apify_token="tok", apify_opener=op)
+    assert r.method == "none"
+
+def test_youtube_apify_fallback_disabled(tmp_path, monkeypatch):
+    cfg = Config(youtube_apify_fallback=False)
+    def blocked(url, out_dir): raise RuntimeError("bot")
+    monkeypatch.setattr("lib.fetch_video.fetch_captions", blocked)
+    op = _apify_opener({"transcript_text": "x"})
+    r = fetch_video("https://www.youtube.com/watch?v=abc", tmp_path, cfg, "gk", "youtube", apify_token="tok", apify_opener=op)
+    assert r.method == "none" and op.calls["n"] == 0
+
+def test_tiktok_blocked_does_not_use_youtube_actor(tmp_path, monkeypatch):
+    def blocked(url, out_dir): raise RuntimeError("bot")
+    monkeypatch.setattr("lib.fetch_video.fetch_captions", blocked)
+    op = _apify_opener({"transcript_text": "x"})
+    r = fetch_video("https://www.tiktok.com/@a/video/1", tmp_path, Config(), "gk", "tiktok", apify_token="tok", apify_opener=op)
+    assert r.method == "none" and op.calls["n"] == 0             # actor é do YouTube; tiktok não usa
