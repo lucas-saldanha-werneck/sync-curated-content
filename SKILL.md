@@ -10,7 +10,7 @@ Serviço que roda como container Docker na VPS `nova` (`/opt/sync-raindrop/app`,
 ## Comandos (sempre via SSH, sempre este formato)
 
 ```
-ssh nova docker exec sync-raindrop python3 /app/bin/sync.py <comando> [args]
+ssh nova docker exec sync-raindrop sh -c 'set -a; . /secrets/.env; set +a; exec python3 /app/bin/sync.py <comando> [args]'
 ```
 
 - `status` — mostra o `status.md` mais recente (última rodada, pendências, erros, quota do Groq).

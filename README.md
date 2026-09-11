@@ -49,7 +49,7 @@ Não criamos um app Dropbox próprio. O serviço usa a configuração `rclone` q
 
 ### UptimeRobot — feito
 Monitor do tipo KEYWORD, apontando para `https://files.2olhares.com/sync-raindrop/health.json`, avisa se o serviço parar de responder.
-ID do monitor: `PENDENTE (ver task-22-report.md)`.
+ID do monitor: `803965554`.
 
 ### Claude — **precisa trocar**
 A chave que está no `.env` da VPS hoje (`CLAUDE_CODE_OAUTH_TOKEN`) é um token de sessão temporário, válido só até por volta das 08:00 (horário de Brasília) de 2026-09-11. Depois disso o serviço para de conseguir destilar.
