@@ -71,12 +71,20 @@ def _dbx_is_not_found(e) -> bool:
 def _dbx_is_auth(e) -> bool:
     return e.__class__.__name__ == "AuthError"
 
+def _dbx_is_retryable(e) -> bool:
+    """Só erros transitórios: HTTP 5xx/429 do Dropbox (por nome, sem import obrigatório
+    do SDK) ou falha de rede/timeout local. Nunca erros de programação (TypeError etc)."""
+    if e.__class__.__name__ in ("HttpError", "InternalServerError", "RateLimitError", "URLError"):
+        return True
+    return isinstance(e, (OSError, ConnectionError, TimeoutError))
+
 class DropboxStore:
     def __init__(self, provider: TokenProvider, client_factory: Callable | None = None,
                  is_conflict=_dbx_is_conflict, is_not_found=_dbx_is_not_found, is_auth=_dbx_is_auth,
-                 write_mode=None):
+                 write_mode=None, is_retryable=_dbx_is_retryable):
         self.provider = provider; self.factory = client_factory or _default_factory
         self.is_conflict, self.is_not_found, self.is_auth = is_conflict, is_not_found, is_auth
+        self.is_retryable = is_retryable
         self._wm = write_mode or (lambda: __import__("dropbox.files", fromlist=["WriteMode"]).WriteMode)
         self._client = None
 
@@ -94,6 +102,7 @@ class DropboxStore:
                 if self.is_not_found(e): raise FileNotFoundError(str(e)) from e
                 if self.is_auth(e) and attempt == 0:
                     self._client = self.factory(self.provider.refresh()); continue
+                if not self.is_retryable(e): raise
                 if attempt == 3: raise
                 time.sleep(delay); delay *= 2
 
@@ -126,8 +135,8 @@ class DropboxStore:
         return (True, getattr(meta, "rev", None), getattr(meta, "content_hash", None))
 
     def list(self, folder: str) -> list[dict]:
-        out = []
         def go(c):
+            out = []
             res = c.files_list_folder(folder, recursive=True)
             while True:
                 for e in res.entries:
@@ -135,6 +144,6 @@ class DropboxStore:
                         out.append({"path": e.path_display, "rev": e.rev, "content_hash": e.content_hash, "size": e.size})
                 if not res.has_more: break
                 res = c.files_list_folder_continue(res.cursor)
-        try: self._call(go)
+            return out
+        try: return self._call(go)
         except FileNotFoundError: return []
-        return out

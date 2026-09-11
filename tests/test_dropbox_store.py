@@ -1,3 +1,4 @@
+import time
 import pytest
 from lib.dropbox_store import DropboxStore, ConflictError, content_hash, RcloneTokenProvider
 
@@ -47,7 +48,7 @@ class WM:
 def make():
     return DropboxStore(Prov(), client_factory=FakeDbx, is_conflict=lambda e: getattr(e, "kind", "") == "conflict",
                         is_not_found=lambda e: getattr(e, "kind", "") == "not_found", is_auth=lambda e: False,
-                        write_mode=lambda: WM)
+                        write_mode=lambda: WM, is_retryable=lambda e: isinstance(e, ConnectionError))
 
 def test_add_then_update_cas():
     s = make()
@@ -93,3 +94,39 @@ def test_list_folder():
     for e in got:
         assert set(e.keys()) == {"path", "rev", "content_hash", "size"}
     assert s.list("/nope") == []
+
+def test_list_retry_no_duplicates(monkeypatch):
+    monkeypatch.setattr(time, "sleep", lambda *a, **kw: None)
+
+    class FlakyFakeDbx(FakeDbx):
+        def __init__(self, token):
+            super().__init__(token); self.list_calls = 0
+        def files_list_folder(self, folder, recursive=True):
+            self.list_calls += 1
+            if self.list_calls == 1:
+                raise ConnectionError("transient")
+            return super().files_list_folder(folder, recursive=recursive)
+
+    s = DropboxStore(Prov(), client_factory=FlakyFakeDbx, is_conflict=lambda e: getattr(e, "kind", "") == "conflict",
+                      is_not_found=lambda e: getattr(e, "kind", "") == "not_found", is_auth=lambda e: False,
+                      write_mode=lambda: WM, is_retryable=lambda e: isinstance(e, ConnectionError))
+    s.add("/v/a.md", b"one")
+    s.add("/v/b.md", b"two")
+    got = s.list("/v")
+    assert len(got) == 2
+    assert {e["path"] for e in got} == {"/v/a.md", "/v/b.md"}
+
+def test_non_retryable_raises_immediately():
+    calls = {"n": 0}
+
+    class BrokenFakeDbx(FakeDbx):
+        def files_get_metadata(self, path):
+            calls["n"] += 1
+            raise TypeError("boom")
+
+    s = DropboxStore(Prov(), client_factory=BrokenFakeDbx, is_conflict=lambda e: getattr(e, "kind", "") == "conflict",
+                      is_not_found=lambda e: getattr(e, "kind", "") == "not_found", is_auth=lambda e: False,
+                      write_mode=lambda: WM, is_retryable=lambda e: isinstance(e, ConnectionError))
+    with pytest.raises(TypeError):
+        s.exists("/v/x")
+    assert calls["n"] == 1
