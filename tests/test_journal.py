@@ -45,3 +45,15 @@ def test_pop_requests_atomic_returning(tmp_path):
     assert [r["cmd"] for r in rows] == ["cmd1", "cmd2"]
     assert j.pop_requests() == []
     j.close()
+
+
+def test_runs_today_counts_only_runs_that_reached_claude(tmp_path):
+    # teto diário limita chamadas ao Claude: lote abortado antes de terminar (running/aborted) ou vazio não conta
+    j = Journal(tmp_path / "j.db")
+    j.finish_run(j.start_run("distill", [1]), "ok", {})
+    j.finish_run(j.start_run("distill", [2]), "distill_invalid", {})
+    j.finish_run(j.start_run("distill", [3]), "aborted", {})
+    j.finish_run(j.start_run("distill", [4]), "empty", {})
+    j.start_run("distill", [5])                                   # órfão "running"
+    assert j.runs_today("distill", "America/Sao_Paulo") == 2
+    j.close()

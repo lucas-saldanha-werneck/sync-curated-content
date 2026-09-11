@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """sync-raindrop — CLI. run|once|now|status|retry <id>|backfill|undo <run_id>"""
 from __future__ import annotations
-import argparse, json, os, shutil, signal, sys, time
+import argparse, json, os, shutil, signal, sys, time, traceback
 from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -75,7 +75,8 @@ class App:
                         except Exception as e:
                             self.journal.upsert_item(iid, last_error=f"batch: {e}")
             except Exception as e:
-                for iid in batch: self.journal.upsert_item(iid, last_error=f"batch: {e}")
+                print(f"erro no lote {batch}: {type(e).__name__}: {e}\n{traceback.format_exc()[-1500:]}", file=sys.stderr, flush=True)
+                for iid in batch: self.journal.upsert_item(iid, last_error=f"batch: {type(e).__name__}: {e}")
                 break
             recs = self.records.refresh(); ready = [iid for iid, k in recs.items() if needs_distill(k)]
             self.first_pending = self.now() if ready else None

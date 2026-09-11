@@ -129,3 +129,14 @@ def test_apply_conflict_propagates(tmp_path):
     m = plan_ops(OUT, s, ITEMS, Config(), "run1", "2026-09-11", {"inversor", "solar"})
     with pytest.raises(ConflictError):
         apply(m, store, Journal(tmp_path / "j.db"), Config())
+
+
+def test_render_catalog_ignores_entries_without_catalog():
+    # registro de decisão "skip" tem "catalog": null — não pode derrubar a regeração do catálogo (bug 2026-09-11, r1707710772)
+    entries = [
+        {"id": 1, "date": "2026-09-11", "raw": "raw/curated/x.md", "decision": "skip", "catalog": None},
+        {"id": 2, "date": "2026-09-11", "raw": "raw/curated/y.md", "decision": "wiki",
+         "catalog": {"name": "Y", "type": "ferramenta", "what": "w", "when": "q", "triggers": [], "implement": False}},
+    ]
+    out = render_catalog(entries).decode("utf-8")
+    assert "<!-- r2 -->" in out and "<!-- r1 -->" not in out

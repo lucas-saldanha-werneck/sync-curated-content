@@ -1,6 +1,7 @@
 """Lote de destilação: snapshot → claude (só leitura) → aplicador → CAS → registros → tags."""
 from __future__ import annotations
 import os
+import traceback
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -52,10 +53,19 @@ def _retry_or_escalate(deps, cfg, res, iid, error_msg):
 
 
 def run_batch(item_ids: list[int], deps: BatchDeps, work: Path) -> dict:
+    run_id = deps.journal.start_run("distill", item_ids)
+    try:
+        return _run_batch(item_ids, deps, work, run_id)
+    except Exception as e:
+        # nunca deixar run "running" órfão: fecha como aborted com o traceback (o chamador só guarda str(e))
+        deps.journal.finish_run(run_id, "aborted", {"run_id": run_id, "error": f"{type(e).__name__}: {e}", "traceback": traceback.format_exc()[-2000:]})
+        raise
+
+
+def _run_batch(item_ids: list[int], deps: BatchDeps, work: Path, run_id: str) -> dict:
     cfg = deps.cfg
     now = deps.now()
     today = now.astimezone(ZoneInfo(cfg.tz)).strftime("%Y-%m-%d") if now.tzinfo else now.strftime("%Y-%m-%d")
-    run_id = deps.journal.start_run("distill", item_ids)
     res = {"run_id": run_id, "items": {}, "ops": 0, "warnings": [], "status": "ok"}
     items: dict[int, dict] = {}
     for iid in item_ids:

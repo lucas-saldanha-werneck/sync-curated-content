@@ -91,7 +91,8 @@ class Journal:
 
     def runs_today(self, kind: str, tz: str) -> int:
         day = datetime.now(ZoneInfo(tz)).strftime("%Y-%m-%d")
-        rows = self.con.execute("SELECT started FROM runs WHERE kind=?", (kind,)).fetchall()
+        # teto diário limita chamadas ao Claude: lote abortado por exceção (aborted), órfão (running) ou vazio não conta
+        rows = self.con.execute("SELECT started FROM runs WHERE kind=? AND status NOT IN ('running', 'aborted', 'empty')", (kind,)).fetchall()
         return sum(1 for r in rows if datetime.fromisoformat(r["started"]).astimezone(ZoneInfo(tz)).strftime("%Y-%m-%d") == day)
 
     def add_groq_seconds(self, seconds: int) -> None:

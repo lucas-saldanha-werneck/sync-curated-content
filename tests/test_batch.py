@@ -106,3 +106,24 @@ def test_incomplete_counts_retries_then_erro(tmp_path, monkeypatch):
     assert res["items"][1] == "erro"
     assert rd.puts[-1][0] == ["sr:erro"] and "sr:raw" in rd.puts[-1][1]
     deps.records.refresh(); assert deps.records.state(1) == "erro"
+
+
+def test_run_batch_survives_skip_record_without_catalog(tmp_path):
+    # bug 2026-09-11: registro distill de um "skip" anterior tem catalog=None e derrubava render_catalog em TODO lote seguinte
+    deps, store, rd = make_deps(tmp_path)
+    deps.records.write(9, "distill", {"id": 9, "decision": "skip", "catalog": None, "date": "2026-09-11", "raw": "raw/curated/z.md", "pages": []})
+    deps.records.refresh()
+    res = run_batch([1], deps, tmp_path / "work")
+    assert res["status"] == "ok" and res["items"][1] == "wiki"
+
+
+def test_run_batch_unexpected_exception_marks_run_aborted(tmp_path):
+    deps, store, rd = make_deps(tmp_path)
+    def boom(): raise RuntimeError("falha inesperada")
+    deps.snapshot.pull = boom
+    import pytest
+    with pytest.raises(RuntimeError):
+        run_batch([1], deps, tmp_path / "work")
+    row = deps.journal.con.execute("SELECT status, summary FROM runs").fetchone()
+    assert row["status"] == "aborted" and "falha inesperada" in row["summary"]
+    assert deps.journal.runs_today("distill", "America/Sao_Paulo") == 0

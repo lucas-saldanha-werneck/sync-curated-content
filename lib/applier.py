@@ -60,8 +60,10 @@ def render_catalog(entries: list[dict]) -> bytes:
             "Gerado por `sync-raindrop` a partir de `raw/curated/_catalog/`. Não editar à mão: é regenerado a cada lote.", "",
             "| Data | Nome | Tipo | Para que serve | Quando usar | Gatilhos | Raw | ⚡ |", "|---|---|---|---|---|---|---|---|"]
     rows = []
+    # decisão "skip" grava "catalog": null — não tem linha no catálogo e não pode derrubar a regeração (bug 2026-09-11)
+    entries = [e for e in entries if isinstance(e.get("catalog"), dict)]
     for e in sorted(entries, key=lambda x: (x.get("date", ""), x.get("id", 0)), reverse=True):
-        c = e.get("catalog", {})
+        c = e["catalog"]
         rows.append(
             f"| {e.get('date', '')} | {_cell(c.get('name', ''))} | {_cell(c.get('type', ''))} | {_cell(c.get('what', ''))} | {_cell(c.get('when', ''))} | "
             f"{_cell(', '.join(c.get('triggers', [])))} | [raw](../{e.get('raw', '')}) | {'⚡' if c.get('implement') else ''} |"
