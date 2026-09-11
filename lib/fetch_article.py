@@ -16,7 +16,9 @@ def _firecrawl_post(url, key):
         return r.read()
 
 
-def fetch_article(url: str, cfg, jina_key, firecrawl_key, opener=safe_open, run=subprocess.run) -> FetchResult:
+def fetch_article(url: str, cfg, jina_key, firecrawl_key, opener=safe_open, run=subprocess.run, firecrawl_post=None) -> FetchResult:
+    if firecrawl_post is None:
+        firecrawl_post = _firecrawl_post
     errors = []
     try:
         import trafilatura
@@ -41,7 +43,7 @@ def fetch_article(url: str, cfg, jina_key, firecrawl_key, opener=safe_open, run=
         errors.append(f"jina: {e}")
     if firecrawl_key:
         try:
-            raw = _firecrawl_post(url, firecrawl_key) if opener is safe_open else opener("https://api.firecrawl.dev/v1/scrape?url=" + url, timeout=120)[0]
+            raw = firecrawl_post(url, firecrawl_key)
             data = json.loads(raw.decode("utf-8", "ignore"))
             text = (data.get("data") or {}).get("markdown") or ""
             if len(text) >= MIN_CHARS:
@@ -66,11 +68,18 @@ def fetch_pdf(url: str, work: Path, cfg, opener=safe_open, run=subprocess.run) -
         data, _, _ = opener(url, timeout=120)
     except Exception as e:
         return FetchResult(platform="pdf", method="none", error=f"download: {e}")
-    pdf = work / "doc.pdf"; pdf.write_bytes(data)
-    info = run(["pdfinfo", str(pdf)], capture_output=True, text=True, timeout=60)
-    m = re.search(r"Pages:\s+(\d+)", getattr(info, "stdout", "") or "")
-    pages = int(m.group(1)) if m else 0
-    if pages == 0 or pages > cfg.pdf_max_pages:
-        return FetchResult(platform="pdf", method="none", error=f"pdf com {pages} páginas (limite {cfg.pdf_max_pages})")
-    out = run(["pdftotext", "-layout", str(pdf), "-"], capture_output=True, text=True, timeout=120)
-    return FetchResult(platform="pdf", text=getattr(out, "stdout", "") or "", method="pdftotext", extra={"pages": pages})
+    try:
+        pdf = work / "doc.pdf"; pdf.write_bytes(data)
+        info = run(["pdfinfo", str(pdf)], capture_output=True, text=True, timeout=60)
+        if getattr(info, "returncode", 0) != 0:
+            return FetchResult(platform="pdf", method="none", error=f"pdfinfo falhou: {getattr(info, 'stderr', '')}")
+        m = re.search(r"Pages:\s+(\d+)", getattr(info, "stdout", "") or "")
+        pages = int(m.group(1)) if m else 0
+        if pages == 0 or pages > cfg.pdf_max_pages:
+            return FetchResult(platform="pdf", method="none", error=f"pdf com {pages} páginas (limite {cfg.pdf_max_pages})")
+        out = run(["pdftotext", "-layout", str(pdf), "-"], capture_output=True, text=True, timeout=120)
+        if getattr(out, "returncode", 0) != 0:
+            return FetchResult(platform="pdf", method="none", error=f"pdftotext falhou: {getattr(out, 'stderr', '')}")
+        return FetchResult(platform="pdf", text=getattr(out, "stdout", "") or "", method="pdftotext", extra={"pages": pages})
+    except Exception as e:
+        return FetchResult(platform="pdf", method="none", error=f"pdf: {e}")
