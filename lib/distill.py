@@ -8,12 +8,13 @@ from lib.snapshot import Snap
 class DistillError(Exception): ...
 
 
-# Read(/**) NÃO entra: negaria tudo (o próprio workspace vive sob um path absoluto,
+# Read(/**) e Read(//**) NÃO entram: "//" normaliza para "/", então qualquer um dos dois
+# negaria o filesystem inteiro — workspace incluso (ele vive sob um path absoluto,
 # cfg.work_dir/distill/<run_id>). Read(/var/**) e Read(/tmp/**) também não: o workspace real
 # fica em /var/lib/sync-raindrop/distill/<run_id> — deny bate allow no Claude Code, então uma
 # regra genérica de /var/** bloquearia o Claude de ler o próprio workspace que ele deveria ler.
 # Em vez disso, nega hosts/paths específicos fora do workspace.
-DENY = ["Read(//**)", "Read(~/**)", "Read(/proc/**)", "Read(/etc/**)", "Read(/run/**)", "Read(/secrets/**)",
+DENY = ["Read(~/**)", "Read(/proc/**)", "Read(/etc/**)", "Read(/run/**)", "Read(/secrets/**)",
         "Read(/root/**)", "Read(/home/**)", "Read(/opt/**)", "Read(/public/**)",
         "Read(/var/lib/sync-raindrop/journal.db*)", "Read(/var/lib/sync-raindrop/wiki-git/**)",
         "Read(/var/lib/sync-raindrop/runs/**)", "Read(/var/lib/sync-raindrop/capture/**)",

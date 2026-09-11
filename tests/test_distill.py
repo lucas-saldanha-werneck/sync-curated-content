@@ -11,9 +11,10 @@ def test_build_workspace_layout(tmp_path):
     assert (ws / "wiki/a.md").read_bytes() == b"# A\n## Tarifa\n" and (ws / "CLAUDE.md").exists()
     assert (ws / "raw/curated/x-r1.md").exists() and (ws / "raw/curated/x-r1/frames/01.jpg").exists()
     deny = json.loads((ws / ".claude/settings.json").read_text())["permissions"]["deny"]
-    assert any("Read(/**)" in d or "Read(//**)" in d for d in deny) and any("Read(~/**)" in d for d in deny)
+    assert any("Read(~/**)" in d for d in deny)
     assert "Read(/proc/**)" in deny and "Read(/secrets/**)" in deny
     assert "Read(/**)" not in deny and "Read(/var/**)" not in deny and "Read(/tmp/**)" not in deny
+    assert "Read(//**)" not in deny
 
 def test_build_workspace_permissions(tmp_path):
     snap = Snap({"CLAUDE.md": (b"regras", "r0")})
