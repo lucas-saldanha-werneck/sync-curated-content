@@ -20,3 +20,22 @@ def test_write_refresh_state():
     assert r.state(7) == "wiki"
     assert r.read(7, "meta")["link"] == "https://a"
     assert r.write(7, "meta", {"link": "https://a"})   # idêntico → ok, não levanta
+
+
+def test_redo_generation_reopens_item():
+    # undo + retry (Task 26): registros são imutáveis, então "re-destilar" = nova geração (redoN → distillN/wikiN)
+    from lib.records import generation, gen_kind, has_distill
+    store = make_store(); cfg = Config(); r = Records(store, cfg)
+    r.write(7, "meta", {}); r.write(7, "captured", {"raw": "raw/curated/x.md"})
+    r.write(7, "distill", {"decision": "wiki", "catalog": {"name": "v0"}, "date": "2026-09-11", "raw": "raw/curated/x.md"}); r.write(7, "wiki", {}); r.refresh()
+    assert r.state(7) == "wiki" and has_distill(r.kinds(7)) and generation(r.kinds(7)) == 0
+    assert r.request_redo(7) == "redo1"; r.refresh()
+    k = r.kinds(7)
+    assert generation(k) == 1 and gen_kind("distill", k) == "distill1" and not has_distill(k) and terminal_state(k) is None
+    assert r.request_redo(7) is None                 # já reaberto: não empilha redo2 sem nova destilação
+    r.write(7, gen_kind("distill", k), {"decision": "wiki", "catalog": {"name": "v1"}, "date": "2026-09-12", "raw": "raw/curated/x.md"}); r.write(7, gen_kind("wiki", k), {}); r.refresh()
+    assert r.state(7) == "wiki" and has_distill(r.kinds(7))
+    assert [e["catalog"]["name"] for e in r.catalog_entries()] == ["v1"]   # catálogo usa a geração atual
+    assert r.latest_distill(7)["catalog"]["name"] == "v1"
+    assert r.request_redo(7) == "redo2"
+    assert terminal_state({"captured", "distill", "wiki", "redo1", "nowiki"}) == "nowiki"   # opt-out não tem geração

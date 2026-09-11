@@ -23,3 +23,9 @@ def test_predicates():
     assert needs_distill({"captured"}) and not needs_distill({"captured", "distill"}) and not needs_distill({"captured", "wiki"})
     assert retry_number({"meta", "retry1", "retry2"}) == 2
     assert is_nowiki(it(1, "", ["NoWiki"]))
+
+
+def test_needs_distill_after_redo():
+    assert not needs_distill({"meta", "captured", "distill", "wiki"})
+    assert needs_distill({"meta", "captured", "distill", "wiki", "redo1"})
+    assert not needs_distill({"meta", "captured", "distill", "wiki", "redo1", "distill1", "parcial1"})

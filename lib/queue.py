@@ -1,6 +1,6 @@
 """Fila derivada: itens do Raindrop sem nowiki menos os que já têm estado terminal nos registros."""
 from __future__ import annotations
-from lib.records import terminal_state
+from lib.records import terminal_state, has_distill
 
 
 def is_nowiki(item: dict) -> bool:
@@ -12,7 +12,7 @@ def needs_capture(item: dict, kinds: set[str]) -> bool:
 
 
 def needs_distill(kinds: set[str]) -> bool:
-    return "captured" in kinds and "distill" not in kinds and terminal_state(kinds) is None
+    return "captured" in kinds and not has_distill(kinds) and terminal_state(kinds) is None
 
 
 def retry_number(kinds: set[str]) -> int:

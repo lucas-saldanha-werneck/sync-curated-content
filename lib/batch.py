@@ -10,6 +10,7 @@ from lib.applier import LimitError, apply, plan_ops
 from lib.distill import DistillError, build_workspace, render_prompt, run_claude as _run_claude
 from lib.dropbox_store import ConflictError
 from lib.queue import is_nowiki
+from lib.records import gen_kind
 from lib.snapshot import Snap
 
 
@@ -46,7 +47,7 @@ def _retry_or_escalate(deps, cfg, res, iid, error_msg):
     n = int((deps.journal.get_item(iid) or {}).get("retries") or 0) + 1
     deps.journal.upsert_item(iid, retries=n, last_error=error_msg)
     if n >= cfg.retry_max:
-        deps.records.write(iid, "erro", {"error": error_msg}); _tag(deps, iid, ["sr:erro"], ["sr:raw"])
+        deps.records.write(iid, gen_kind("erro", deps.records.kinds(iid)), {"error": error_msg}); _tag(deps, iid, ["sr:erro"], ["sr:raw"])
         res["items"][iid] = "erro"
     else:
         res["items"][iid] = "retry"
@@ -110,7 +111,7 @@ def _run_batch(item_ids: list[int], deps: BatchDeps, work: Path, run_id: str) ->
         except LimitError as e:
             if len(items) > 1:
                 res["status"] = "split"; res["warnings"].append(str(e)); deps.journal.finish_run(run_id, "split", res); return res
-            iid = next(iter(items)); deps.records.write(iid, "erro", {"error": f"limite: {e}"}); _tag(deps, iid, ["sr:erro"], ["sr:raw"])
+            iid = next(iter(items)); deps.records.write(iid, gen_kind("erro", deps.records.kinds(iid)), {"error": f"limite: {e}"}); _tag(deps, iid, ["sr:erro"], ["sr:raw"])
             res["items"][iid] = "erro"; deps.journal.finish_run(run_id, "erro", res); return res
         for iid in list(items):
             fresh = deps.raindrop.get(iid)
@@ -154,9 +155,10 @@ def _run_batch(item_ids: list[int], deps: BatchDeps, work: Path, run_id: str) ->
             res["warnings"].append(f"r{iid}: faltou {missing}")
             _retry_or_escalate(deps, cfg, res, iid, f"incompleto: faltou {sorted(missing)}")
             continue
-        deps.records.write(iid, "distill", {"decision": pi["decision"], "pages": pi["pages"], "catalog": pi["catalog"], "raw": info["raw"], "date": today, "run_id": run_id})
+        kinds = deps.records.kinds(iid)
+        deps.records.write(iid, gen_kind("distill", kinds), {"decision": pi["decision"], "pages": pi["pages"], "catalog": pi["catalog"], "raw": info["raw"], "date": today, "run_id": run_id})
         final = {"wiki": "wiki", "parcial": "parcial", "skip": "skip"}[pi["decision"]]
-        deps.records.write(iid, final, {"pages": pi["pages"], "run_id": run_id, "reason": pi.get("reason")})
+        deps.records.write(iid, gen_kind(final, kinds), {"pages": pi["pages"], "run_id": run_id, "reason": pi.get("reason")})
         deps.journal.upsert_item(iid, state=final)
         note = ("→ wiki: " + ", ".join(f"[[{p[5:-3]}]]" for p in pi["pages"])) if pi["pages"] else (f"sr:{final}: {pi.get('reason','')}" if final != "wiki" else None)
         _tag(deps, iid, [f"sr:{final}"], ["sr:raw", "sr:retry"], note)

@@ -127,3 +127,20 @@ def test_run_batch_unexpected_exception_marks_run_aborted(tmp_path):
     row = deps.journal.con.execute("SELECT status, summary FROM runs").fetchone()
     assert row["status"] == "aborted" and "falha inesperada" in row["summary"]
     assert deps.journal.runs_today("distill", "America/Sao_Paulo") == 0
+
+
+def test_undo_then_redo_reapplies_same_page_without_duplicates(tmp_path):
+    # Task 26 step 2: undo de 1 lote + retry → mesma página volta, marcador idêntico, sem duplicar
+    from lib.undo import undo_run
+    deps, store, rd = make_deps(tmp_path)
+    res1 = run_batch([1], deps, tmp_path / "work"); assert res1["status"] == "ok"
+    page1, _ = store.download("/Projects/vault/wiki/energia-e-recarga.md")
+    u = undo_run(res1["run_id"], store, deps.journal, deps.cfg); assert "wiki/energia-e-recarga.md" in u["reverted"]
+    page_undone, _ = store.download("/Projects/vault/wiki/energia-e-recarga.md"); assert b"curated:r1" not in page_undone
+    deps.records.refresh(); assert deps.records.request_redo(1) == "redo1"
+    deps.records.refresh(); assert deps.records.state(1) is None
+    res2 = run_batch([1], deps, tmp_path / "work"); assert res2["status"] == "ok" and res2["items"][1] == "wiki"
+    page2, _ = store.download("/Projects/vault/wiki/energia-e-recarga.md")
+    assert page2.count(b"<!-- curated:r1 ") == page1.count(b"<!-- curated:r1 ") and page2.count(b"<!-- curated:r1 ") >= 1
+    deps.records.refresh(); assert deps.records.state(1) == "wiki" and "distill1" in deps.records.kinds(1)
+    cat, _ = store.download("/Projects/vault/wiki/ferramentas-e-ideias.md"); assert cat.count(b"<!-- r1 -->") == 1

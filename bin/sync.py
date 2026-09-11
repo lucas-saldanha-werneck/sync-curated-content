@@ -107,8 +107,7 @@ class App:
         try:
             lines = []
             for iid, kinds in sorted(recs.items()):
-                if "distill" not in kinds: continue
-                d = self.records.read(iid, "distill")
+                d = self.records.latest_distill(iid)
                 if not d: continue
                 meta = self.records.read(iid, "meta") or {}
                 cat = d.get("catalog") or {}
@@ -123,7 +122,10 @@ class App:
             self.journal.upsert_item(0, last_error=f"catalog-index.jsonl: {e}")
 
     def retry(self, iid: int):
+        # item já destilado (ex.: depois de um undo): registros são imutáveis → abre geração nova (redoN) para re-destilar
+        self.records.refresh(); redo = self.records.request_redo(iid)
         self.journal.upsert_item(iid, retries=0, last_error=None, state="captured")
+        if redo: print(f"retry r{iid}: {redo} gravado (re-destilação)", flush=True)
 
     def run(self):
         if not self.journal.acquire_lock(): print("outra instância rodando"); return 2
