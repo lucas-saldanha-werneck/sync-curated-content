@@ -15,7 +15,7 @@ class FakeDbx:
         if tag == "add" and cur is not None: raise FakeErr("conflict")
         if tag == "update":
             if cur is None or cur[1] != mode.get_update(): raise FakeErr("conflict")
-        r = self._rev(); self.files[path] = (data, r); return FakeMeta(r, content_hash(data))
+        r = self._rev(); self.files[path] = (data, r); return FakeMeta(r, content_hash)
     def files_download(self, path):
         if path not in self.files: raise FakeErr("not_found")
         data, r = self.files[path]

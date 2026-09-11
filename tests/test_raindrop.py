@@ -1,4 +1,5 @@
 import json
+import pytest
 from pathlib import Path
 from lib.raindrop import RaindropClient, normalize
 
@@ -39,3 +40,25 @@ def test_merge_tags_only_touches_sr():
     put = [b for m, u, b in log if m == "PUT"][0]
     assert put["tags"] == ["dev", "sr:raw"]                 # manteve "dev", não duplicou
     assert put["note"].endswith("→ wiki: [[a]]")
+
+def test_call_retries_once_on_429(monkeypatch):
+    call_count = [0]
+    def retry_http(method, url, body=None):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return (429, None)  # First call: 429 with non-dict body
+        return (200, {"result": True, "item": PAGE["items"][0]})
+
+    c = RaindropClient("t", http=retry_http)
+    monkeypatch.setattr("lib.raindrop.time.sleep", lambda s: None)
+    item = c.get(1001)
+    assert item["id"] == 1001
+    assert call_count[0] == 2  # http called twice
+
+def test_call_raises_on_error():
+    def error_http(method, url, body=None):
+        return (500, {"error": "x"})
+
+    c = RaindropClient("t", http=error_http)
+    with pytest.raises(RuntimeError):
+        c.get(1)
