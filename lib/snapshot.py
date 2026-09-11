@@ -1,5 +1,6 @@
 """Snapshot da wiki via Dropbox (com rev por arquivo) e repo git de undo fora do vault."""
 from __future__ import annotations
+import os
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -50,17 +51,24 @@ class UndoRepo:
             p = self.path / rel
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_bytes(data)
-        # Remove files no longer in snap
-        for p in self.path.rglob("*"):
-            if p.is_file() and p.relative_to(self.path).parts[0] != ".git":
-                rel = str(p.relative_to(self.path))
-                if rel not in snap.files:
-                    p.unlink()
-        # Clean empty dirs (skip .git)
+        # Remove tracked files not in snap (preserve .git)
+        snap_keys = set(snap.files.keys())
         for p in sorted(self.path.rglob("*"), key=lambda x: -len(x.parts)):
-            if p.is_dir() and p.parts[-1] != ".git" and not any(p.iterdir()):
-                p.rmdir()
-        self._git("add", "-A")
+            rel_str = str(p.relative_to(self.path))
+            # Skip anything in .git
+            if rel_str.startswith(".git"):
+                continue
+            if p.is_file():
+                if rel_str not in snap_keys:
+                    p.unlink()
+            elif p.is_dir():
+                try:
+                    next(p.iterdir())  # Check if dir is empty
+                except StopIteration:
+                    p.rmdir()  # Empty dir, remove it
+        r = self._git("add", "-A", check=False)
+        if r.returncode != 0:
+            raise RuntimeError(f"git add failed: {r.stderr}")
         r = self._git("commit", "-q", "-m", message, check=False)
         if r.returncode != 0:
             # Distinguish "nothing to commit" from real failure
