@@ -50,6 +50,11 @@ def _sha(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
 
+def _cell(s) -> str:
+    """Escapa um valor para caber numa célula de tabela markdown de uma linha só."""
+    return str(s).replace("\\", "\\\\").replace("|", "\\|").replace("\r", " ").replace("\n", " ").strip()
+
+
 def render_catalog(entries: list[dict]) -> bytes:
     head = ["# Ferramentas e ideias (curadoria automática)", "",
             "Gerado por `sync-raindrop` a partir de `raw/curated/_catalog/`. Não editar à mão: é regenerado a cada lote.", "",
@@ -58,8 +63,8 @@ def render_catalog(entries: list[dict]) -> bytes:
     for e in sorted(entries, key=lambda x: (x.get("date", ""), x.get("id", 0)), reverse=True):
         c = e.get("catalog", {})
         rows.append(
-            f"| {e.get('date', '')} | {c.get('name', '')} | {c.get('type', '')} | {c.get('what', '')} | {c.get('when', '')} | "
-            f"{', '.join(c.get('triggers', []))} | [raw](../{e.get('raw', '')}) | {'⚡' if c.get('implement') else ''} |"
+            f"| {e.get('date', '')} | {_cell(c.get('name', ''))} | {_cell(c.get('type', ''))} | {_cell(c.get('what', ''))} | {_cell(c.get('when', ''))} | "
+            f"{_cell(', '.join(c.get('triggers', [])))} | [raw](../{e.get('raw', '')}) | {'⚡' if c.get('implement') else ''} |"
             f" <!-- r{e.get('id')} -->"
         )
     return ("\n".join(head + rows) + "\n").encode("utf-8")
@@ -76,7 +81,11 @@ def plan_ops(output: dict, snap: Snap, items: dict, cfg, run_id: str, today: str
     log_lines = []
 
     for it in output.get("items", []):
-        iid = int(it["raindrop_id"])
+        try:
+            iid = int(it["raindrop_id"])
+        except (KeyError, TypeError, ValueError):
+            m.warnings.append(f"r-1: raindrop_id inválido ou ausente: {it.get('raindrop_id')!r}")
+            continue                                        # id malformado não pode abortar o lote inteiro
         info = items.get(iid)
         if not info:
             m.warnings.append(f"r{iid}: item desconhecido na saída")

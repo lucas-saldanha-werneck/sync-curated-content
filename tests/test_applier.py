@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from lib.applier import plan_ops, apply, insert_after_anchor, marker, LimitError
+from lib.applier import plan_ops, apply, insert_after_anchor, marker, render_catalog, LimitError
 from lib.snapshot import Snap
 from lib.config import Config
 from lib.journal import Journal
@@ -92,6 +92,33 @@ def test_apply_cas_and_journal(tmp_path):
     data, _ = store.download("/Projects/vault/wiki/energia-e-recarga.md"); assert b"curated:r1" in data
     assert store.exists("/Projects/vault/wiki/log/2026-09_curated.md")[0]
     assert set(m2.per_item[1]["done"]) == {"claims", "catalog", "log"}
+
+
+def test_render_catalog_escapes_pipes_and_newlines():
+    entries = [{
+        "id": 1, "date": "2026-09-11", "raw": "raw/curated/x.md",
+        "catalog": {"name": "Ferramenta | Injetada", "type": "ferramenta", "what": "l1\nl2",
+                    "when": "quando usar", "triggers": ["a|b"], "implement": False},
+    }]
+    out = render_catalog(entries).decode("utf-8")
+    sep = "|---|---|---|---|---|---|---|---|"
+    idx = out.index(sep) + len(sep) + 1                # pula o "\n" logo após o separador
+    rows_section = out[idx:]
+    assert rows_section.count("\n") == len(entries) == 1
+    assert "Ferramenta \\| Injetada" in rows_section
+    assert "l1 l2" in rows_section                      # newline virou espaço, sem quebrar a linha
+    assert "a\\|b" in rows_section
+
+
+def test_plan_ops_bad_id_does_not_abort_batch():
+    out = json.loads(json.dumps(OUT))
+    bad_item = dict(out["items"][0]); bad_item["raindrop_id"] = "x"
+    out["items"] = [bad_item] + out["items"]            # item malformado antes do item válido
+    m = plan_ops(out, snap(), ITEMS, Config(), "run1", "2026-09-11", {"inversor", "solar"})
+    assert -1 not in m.per_item
+    assert any("raindrop_id" in w for w in m.warnings)
+    assert [o for o in m.ops if o.path == "wiki/energia-e-recarga.md"]
+    assert m.per_item[1]["decision"] == "wiki"
 
 
 def test_apply_conflict_propagates(tmp_path):
