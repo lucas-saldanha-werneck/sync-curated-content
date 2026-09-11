@@ -15,6 +15,19 @@ def test_sanitize():
 def test_render_raw_frontmatter_and_sections():
     fr = FetchResult(platform="youtube", text="fala​ do vídeo", method="captions", title="T", author="A", duration_s=120)
     md = render_raw(ITEM, fr, "youtube", "raw/curated/x-r77.md", ["01_0000.jpg"])
-    assert md.startswith("---\n") and "raindrop_id: 77" in md and "transcript_method: captions" in md and "ingested: true" in md
+    assert md.startswith("---\n") and "raindrop_id: 77" in md and 'transcript_method: "captions"' in md and "ingested: true" in md
     assert "## Nota do Lucas\nver p/ LuxVolt" in md and "fala do vídeo" in md and "​" not in md
     assert '"_id": 77' in md and "frames:\n  - 01_0000.jpg" in md
+
+def test_frontmatter_strings_are_quoted():
+    fr = FetchResult(platform="youtube", text="test", method="captions", title="T", author="A", duration_s=120)
+    md = render_raw(ITEM, fr, "youtube", "raw/curated/x-r77.md", ["01_0000.jpg"])
+    assert 'created: "2026-09-10T23:30:00.000Z"' in md
+    assert 'platform: "youtube"' in md
+    assert 'transcript_method: "captions"' in md
+    assert 'origem: "raindrop"' in md
+
+def test_empty_frames_list():
+    fr = FetchResult(platform="youtube", text="test", method="captions", title="T", author="A", duration_s=120)
+    md = render_raw(ITEM, fr, "youtube", "raw/curated/x-r77.md", [])
+    assert "frames: []" in md

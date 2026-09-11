@@ -28,12 +28,16 @@ def _y(s) -> str:
 
 def render_raw(item: dict, fr: FetchResult, platform: str, raw_rel: str, frame_names: list[str], origem: str = "raindrop") -> str:
     now = datetime.now().astimezone().isoformat(timespec="seconds")
-    lines = ["---", f"source: {_y(item['link'])}", f"platform: {platform}", f"raindrop_id: {item['id']}",
+    lines = ["---", f"source: {_y(item['link'])}", f"platform: {_y(platform)}", f"raindrop_id: {item['id']}",
              f"title: {_y(fr.title or item.get('title') or '')}", f"author: {_y(fr.author or '')}",
-             f"created: {item['created']}", f"captured_at: {now}", f"transcript_method: {fr.method}",
+             f"created: {_y(item['created'])}", f"captured_at: {_y(now)}", f"transcript_method: {_y(fr.method)}",
              f"duration_s: {int(fr.duration_s) if fr.duration_s else 0}", "tags:"] + [f"  - {_y(t)}" for t in item.get("tags", [])]
-    lines += [f"note: {_y(item.get('note') or '')}", "frames:"] + [f"  - {n}" for n in frame_names]
-    lines += [f"origem: {origem}", "ingested: true", "---", ""]
+    lines += [f"note: {_y(item.get('note') or '')}"]
+    if frame_names:
+        lines += ["frames:"] + [f"  - {n}" for n in frame_names]
+    else:
+        lines += ["frames: []"]
+    lines += [f"origem: {_y(origem)}", "ingested: true", "---", ""]
     body = [f"# {sanitize_control_chars(fr.title or item.get('title') or item['link'])}", ""]
     if item.get("note"): body += ["## Nota do Lucas", sanitize_control_chars(item["note"]), ""]
     if item.get("excerpt"): body += ["## Resumo do Raindrop", sanitize_control_chars(item["excerpt"]), ""]
