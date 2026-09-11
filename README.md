@@ -45,25 +45,20 @@ Tudo abaixo já foi configurado. Fica registrado aqui para quando precisar troca
 App "sync-raindrop" criado no Raindrop, token de teste (Test token) gerado e já colocado no `.env` da VPS. Nada a fazer.
 
 ### Dropbox — feito
-Não criamos um app Dropbox próprio. O serviço usa a configuração `rclone` que já existe na VPS (mesmas credenciais de outros serviços). Nada a fazer.
+Não criamos um app Dropbox próprio. O serviço usa a configuração `rclone` que já existe na VPS, copiada para `/opt/sync-raindrop/rclone/rclone.conf` (pasta própria, dona `app`, montada no container como `/secrets/rclone`). O `rclone` renova o token do Dropbox sozinho a cada 4 h e **regrava o arquivo** — por isso a pasta inteira é montada, nunca só o arquivo. Nada a fazer.
 
 ### UptimeRobot — feito
 Monitor do tipo KEYWORD, apontando para `https://files.2olhares.com/sync-raindrop/health.json`, avisa se o serviço parar de responder.
 ID do monitor: `803965554`.
 
-### Claude — **precisa trocar**
-A chave que está no `.env` da VPS hoje (`CLAUDE_CODE_OAUTH_TOKEN`) é um token de sessão temporário, válido só até por volta das 08:00 (horário de Brasília) de 2026-09-11. Depois disso o serviço para de conseguir destilar.
+### Claude — feito (2026-09-11 05:15)
+`CLAUDE_CODE_OAUTH_TOKEN` no `.env` da VPS é um token de 1 ano gerado com `claude setup-token` (token de sessão do Mac **não serve**: é revogado quando o Mac renova o dele).
 
-**O que fazer:**
-1. No Mac, rode: `claude setup-token`
-2. Copie o valor que ele mostrar.
-3. Abra `/opt/sync-raindrop/.env` na VPS e troque o valor de `CLAUDE_CODE_OAUTH_TOKEN` por esse.
-4. Rode: `ssh nova 'cd /opt/sync-raindrop/app && docker compose restart'`
-
-### Groq — **precisa trocar**
-A chave (`GROQ_API_KEY`) que está no `.env` hoje é **compartilhada com o LensReport**. Isso é arriscado: os dois serviços competem pela mesma cota, e um consumo alto de um afeta o outro.
-
-**O que fazer:**
-1. Abra `console.groq.com/keys` e crie uma chave nova, só para o `sync-raindrop`.
-2. Abra `/opt/sync-raindrop/.env` na VPS e troque `GROQ_API_KEY` pela chave nova.
+**Quando vencer (setembro de 2027) ou se for revogado:**
+1. No Mac, rode `claude setup-token`, faça o login no link e copie o token. (Pelo iPhone via Remote Control também dá: o Claude roda o comando num `tmux`, você abre o link, cola o código no chat e ele grava o token direto na VPS.)
+2. Troque o valor de `CLAUDE_CODE_OAUTH_TOKEN` em `/opt/sync-raindrop/.env`.
 3. Rode: `ssh nova 'cd /opt/sync-raindrop/app && docker compose restart'`
+
+### Groq — feito (2026-09-11 05:20)
+`GROQ_API_KEY` no `.env` da VPS é uma chave própria do `sync-raindrop` (não é mais a do LensReport). Para trocar: nova chave em `console.groq.com/keys`, editar o `.env`, `docker compose restart`.
+

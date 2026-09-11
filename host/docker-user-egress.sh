@@ -13,14 +13,17 @@ for d in $DSTS; do
   RULES="${RULES}-A DOCKER-USER -s ${SRC} -d ${d} -j DROP\n"
 done
 AR=/etc/ufw/after.rules
-if ! grep -q "sync-raindrop egress" "$AR"; then
-  python3 - "$AR" "$(printf "$RULES")" <<'PY'
+# persistência: checa pela própria regra (não pelo comentário) e usa printf -- (a linha começa com "-A")
+if ! grep -q -- "-s ${SRC} -d 10.0.0.0/8 -j DROP" "$AR"; then
+  python3 - "$AR" "$(printf -- "$RULES")" <<'PY'
 import sys, re
 path, rules = sys.argv[1], sys.argv[2]
 s = open(path).read()
 marker = ":DOCKER-USER - [0:0]\n"
 assert marker in s, "bloco DOCKER-USER não encontrado em after.rules"
-s = s.replace(marker, marker + "# sync-raindrop egress (host/docker-user-egress.sh): nada de RFC1918/link-local/CGNAT/host a partir de 172.28.0.0/16\n" + rules + "\n", 1)
+comment = "# sync-raindrop egress (host/docker-user-egress.sh): nada de RFC1918/link-local/CGNAT/host a partir de 172.28.0.0/16\n"
+s = s.replace(comment + "\n", "", 1).replace(comment, "", 1)   # limpa marcador órfão de uma versão anterior
+s = s.replace(marker, marker + comment + rules + "\n", 1)
 open(path, "w").write(s)
 PY
 fi
