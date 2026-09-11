@@ -117,3 +117,19 @@ Decisões do Lucas incorporadas: nome ok; escopo = todo o histórico (backfill n
 
 ### Adendo v0.4.1 — indicação do Lucas (2026-09-10 23:50)
 `bradautomates/claude-video` (MIT, 17.060 ★, push 2026-07-01) = original do plugin `watch` já instalado (fork taoufik123-collab/claude-watch v0.2.0). Scripts stdlib-only vendorados em `lib/video/` (captions, VTT dedupe, Groq chunking com Retry-After, keyframes com dedup). Novo no v1: até 6 keyframes por vídeo em `raw/curated/<item>/frames/`, lidos pelo Fable no lote (limite 30 imagens/lote). Ver DESIGN §6.1. Não re-verificado por Codex/conselho.
+
+## Spike (Task 0) — 2026-09-11
+
+Rodado na VPS `nova` via `scripts/spike.sh` (2 execuções; a 1ª expôs um bug de invocação em (a), corrigido no próprio spike e re-rodado — ver `task-0-report.md`).
+
+- **(a) OK** — `claude -p` no container `node:22`, modelo `claude-fable-5-1`, `--output-format json --json-schema`, `--permission-mode dontAsk`, `--allowedTools Read,Glob,Grep`, `--disallowedTools Write,Edit,Bash,WebFetch,WebSearch`: respondeu JSON estruturado válido. Achado p/ Task 15: o prompt posicional precisa vir logo após `-p`, **antes** de `--allowedTools`/`--disallowedTools` (flags variádicas do commander.js engolem o argumento seguinte se ele vier depois). Chaves top-level do JSON: `structured_output` (dict, já parseado) e `result` (a mesma coisa como string) — Task 15 deve ler `structured_output`.
+- **(b) OK (com ressalva)** — a string `NAO_DEVE_APARECER` não vazou. Mas o modelo leu `/etc/passwd` (fora de `/ws`) sem ser barrado pelo `--allowedTools Read` — a ferramenta Read não é confinada ao workspace por si só. O motivo de `.env.fake` não vazar é que o mount `-v $PWD:/ws:ro` simplesmente não expõe nada fora de `/ws` no container, não uma barreira do `--allowedTools`. **Implicação para Task 15/25: o limite de segurança real é o que é montado no container (`-v`), não `--allowedTools`/`--permission-mode` sozinhos — nunca montar nada sensível além do workspace do lote.**
+- **(c) OK** — CAS do Dropbox provado: `rev` velho em `WriteMode.update` → conflito; `WriteMode.add` sobre existente → conflito; download final bate com o `rev` do último upload. Token lido do `rclone.conf` (sem app Dropbox dedicado — ver decisão abaixo).
+- **(d) FAIL** — `yt-dlp` bloqueado pelo YouTube a partir do IP da VPS ("Sign in to confirm you're not a bot"). Falha esperada, já prevista no plano: ativar `bgutil-ytdlp-pot-provider` na Task 22 (Dockerfile já prevê).
+- **(e) OK** — Groq Whisper transcreveu o áudio de 12s gerado com `ffmpeg`/`sine`; resposta trouxe `"text"`.
+
+**Decisão registrada:** não há app Dropbox dedicado nesta VPS (sem `DROPBOX_REFRESH_TOKEN`/`APP_KEY`/`APP_SECRET`). O token usado por `spike_dropbox.py` vem do `token` (JSON) da seção `[dropbox]` de `/opt/sync-raindrop/rclone.conf`, renovado via `rclone lsd dropbox:` quando a expiração está a menos de 5 min. Task 25 (env do Lucas) deve reconsiderar se o design final usa esse mesmo caminho (rclone) em vez de app OAuth próprio.
+
+**Ambiente da VPS (Ubuntu 22.04) não tinha de fábrica:** `pip`/`ffmpeg`/`yt-dlp`. Resolvido com `apt-get install -y ffmpeg python3-venv python3-pip` (pacotes de sistema) e uma venv dedicada `/opt/sync-raindrop/.spike-venv` para `dropbox`+`yt-dlp[default]` — o próprio `scripts/spike.sh` cria/instala isso sozinho se faltar.
+
+Detalhes completos, comandos exatos e saídas (segredos mascarados) em `task-0-report.md`.
