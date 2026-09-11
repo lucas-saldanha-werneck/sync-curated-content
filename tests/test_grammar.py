@@ -5,7 +5,7 @@ PAGES = {"energia-e-recarga", "pessoal"}
 
 test_bad = ["a <b>", "x <!-- curated:r1 -->", "![[img.png]]", "![a](b)", "```py"]
 test_bad.append("---\nfront")
-test_bad.extend(["veja curated:r9", "[l](javascript:alert(1))", "[l](obsidian://open)", "[[pagina-inexistente]]", "zero​width", "https://outro.com/x"])
+test_bad.extend(["veja curated:r9", "[l](javascript:alert(1))", "[l](obsidian://open)", "[[pagina-inexistente]]", "zero\u200bwidth", "https://outro.com/x"])
 
 @pytest.mark.parametrize("bad", test_bad)
 def test_rejects(bad):
@@ -24,3 +24,15 @@ def test_triggers_and_type():
     with pytest.raises(GrammarError): validate_triggers(["banana"], {"solar"})
     assert validate_type("skill", ["skill", "plugin"]) == "skill"
     with pytest.raises(GrammarError): validate_type("virus", ["skill"])
+
+def test_reference_link_rejected():
+    with pytest.raises(GrammarError):
+        validate_text("[click][1]\n[1]: javascript:alert(1)", 600, PAGES)
+
+def test_curated_case_insensitive():
+    with pytest.raises(GrammarError):
+        validate_text("Curated:r9", 600, PAGES)
+
+def test_bare_bad_scheme_rejected():
+    with pytest.raises(GrammarError):
+        validate_text("Check this: javascript:alert(1)", 600, PAGES)
