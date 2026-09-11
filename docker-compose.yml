@@ -18,6 +18,9 @@ services:
       - /opt/files/public/sync-raindrop:/public/sync-raindrop
     environment:
       - TZ=America/Sao_Paulo
+      # yt-dlp sai pela fibra residencial (proxy do host no túnel WireGuard) → sem bot-wall do YouTube.
+      # É o PRIMÁRIO; se o proxy/túnel cair, o yt-dlp falha e o Apify assume (failover em software).
+      - YTDLP_PROXY=http://172.28.0.1:8890
     mem_limit: 1536m
     pids_limit: 256
     cap_drop: ["ALL"]
