@@ -15,10 +15,9 @@ def route(url: str, rtype: str) -> str:
     return "article"
 
 def _drop_privileges():
-    try:
-        pw = pwd.getpwnam("app-fetch"); os.setgid(pw.pw_gid); os.setuid(pw.pw_uid)
-    except (KeyError, PermissionError):
-        pass                                        # no Mac/testes não existe o usuário
+    # no Mac/testes app-fetch não existe → no-op; em produção qualquer falha levanta (review Opus M2)
+    from lib.privs import drop_to
+    drop_to("app-fetch")
 
 def _worker(q, fn, args, kwargs, env):
     try:

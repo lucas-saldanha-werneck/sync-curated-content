@@ -90,8 +90,8 @@ class Records:
         """`retry` de item já destilado: grava redoN (imutável) e reabre o item para nova destilação.
         Devolve o kind gravado, ou None se o item ainda não tem distill na geração atual (retry comum basta)."""
         kinds = self.kinds(item_id)
-        if not has_distill(kinds):
-            return None
+        if not has_distill(kinds) and terminal_state(kinds) in (None, "nowiki"):
+            return None                     # ainda na fila (retry comum basta) ou opt-out do usuário (irreversível por aqui)
         kind = f"redo{generation(kinds) + 1}"
         self.write(item_id, kind, {"prev": gen_kind("distill", kinds), "reason": "retry após destilação (undo/retry)"})
         return kind

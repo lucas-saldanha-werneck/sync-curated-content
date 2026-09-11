@@ -27,4 +27,9 @@ else
   echo "bgutil PO-token provider ausente — YTDLP_POT_URL não definido" >&2
 fi
 
-exec gosu app python3 /app/bin/sync.py "$@"
+# Orquestrador como `app` MAS com CAP_SETUID/CAP_SETGID ambientes: é o que permite os subprocessos caírem para
+# app-claude / app-fetch (lib/privs.drop_to zera as capabilities no filho). `gosu` limpava as caps na transição
+# 0→app e a troca de uid falhava calada (review Opus M2). O compose concede SETUID/SETGID; no-new-privileges não
+# bloqueia caps ambientes já herdadas.
+exec setpriv --reuid app --regid app --init-groups --inh-caps +setuid,+setgid --ambient-caps +setuid,+setgid \
+     python3 /app/bin/sync.py "$@"

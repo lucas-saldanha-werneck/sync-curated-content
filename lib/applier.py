@@ -237,13 +237,14 @@ def apply(manifest: Manifest, store, journal, cfg) -> Manifest:
         if op.rev_after:
             continue
         full = cfg.vault_path(op.path)
-        op_id = journal.add_op(manifest.run_id, op.item_ids[0] if op.item_ids else 0, op.path, op.kind, op.rev_before, op.delta_sha) if journal else None
+        # uma linha de op POR ITEM (o undo deriva os ids a apagar dessas linhas — review Opus M1)
+        op_ids = [journal.add_op(manifest.run_id, iid, op.path, op.kind, op.rev_before, op.delta_sha) for iid in (op.item_ids or [0])] if journal else []
         if op.kind == "update":
             rev = store.update(full, op.after, op.rev_before)
         else:
             rev = store.add(full, op.after)
         op.rev_after = rev
-        if journal and op_id:
+        for op_id in op_ids:
             journal.confirm_op(op_id, rev)
         for iid in op.item_ids:
             pi = manifest.per_item.get(iid)

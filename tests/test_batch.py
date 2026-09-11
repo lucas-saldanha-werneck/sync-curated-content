@@ -144,3 +144,27 @@ def test_undo_then_redo_reapplies_same_page_without_duplicates(tmp_path):
     assert page2.count(b"<!-- curated:r1 ") == page1.count(b"<!-- curated:r1 ") and page2.count(b"<!-- curated:r1 ") >= 1
     deps.records.refresh(); assert deps.records.state(1) == "wiki" and "distill1" in deps.records.kinds(1)
     cat, _ = store.download("/Projects/vault/wiki/ferramentas-e-ideias.md"); assert cat.count(b"<!-- r1 -->") == 1
+
+
+def test_late_nowiki_writes_nothing_for_that_item_in_a_two_item_batch(tmp_path):
+    # M4 (review Opus): nowiki marcado entre o plan_ops e o push ainda ganhava linha no catálogo e no log (ops compartilhadas)
+    deps, store, rd = make_deps(tmp_path); cfg = deps.cfg
+    raw2 = "raw/curated/2026-09-10_youtube-fonte-b-r2.md"
+    store.add(cfg.vault_path(raw2), b"---\nraindrop_id: 2\n---\n# Fonte B\nconteudo")
+    deps.records.write(2, "meta", {"link": "https://fonte.com/b", "title": "Fonte B"}); deps.records.write(2, "captured", {"raw": raw2, "frames": [], "method": "captions", "platform": "youtube"}); deps.records.refresh()
+    out = json.loads(json.dumps(OUT)); it2 = json.loads(json.dumps(out["items"][0])); it2["raindrop_id"] = 2; out["items"].append(it2)
+    deps.run_claude = lambda ws, cfg, tok, prompt, schema, **k: out
+    class LateNowiki(type(rd)):
+        def __init__(self, item): super().__init__(item); self.calls = {}
+        def get(self, i):
+            self.calls[i] = self.calls.get(i, 0) + 1
+            d = dict(self.item); d["id"] = i; d["link"] = f"https://fonte.com/{'a' if i == 1 else 'b'}"
+            if i == 2 and self.calls[i] >= 2: d["tags"] = ["nowiki"]          # 1ª checagem: ok; revalidação pré-push: nowiki
+            return d
+    deps.raindrop = LateNowiki(rd.item)
+    res = run_batch([1, 2], deps, tmp_path / "work")
+    assert res["status"] == "ok" and res["items"][1] == "wiki" and res["items"][2] == "nowiki"
+    page, _ = store.download("/Projects/vault/wiki/energia-e-recarga.md"); assert b"curated:r1" in page and b"curated:r2" not in page
+    cat, _ = store.download("/Projects/vault/wiki/ferramentas-e-ideias.md"); assert b"<!-- r1 -->" in cat and b"<!-- r2 -->" not in cat
+    log, _ = store.download("/Projects/vault/wiki/log/2026-09_curated.md"); assert b" r1 " in log and b" r2 " not in log
+    deps.records.refresh(); assert deps.records.state(2) == "nowiki" and "distill" not in deps.records.kinds(2)

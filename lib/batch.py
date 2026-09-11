@@ -113,12 +113,17 @@ def _run_batch(item_ids: list[int], deps: BatchDeps, work: Path, run_id: str) ->
                 res["status"] = "split"; res["warnings"].append(str(e)); deps.journal.finish_run(run_id, "split", res); return res
             iid = next(iter(items)); deps.records.write(iid, gen_kind("erro", deps.records.kinds(iid)), {"error": f"limite: {e}"}); _tag(deps, iid, ["sr:erro"], ["sr:raw"])
             res["items"][iid] = "erro"; deps.journal.finish_run(run_id, "erro", res); return res
-        for iid in list(items):
-            fresh = deps.raindrop.get(iid)
-            if fresh and is_nowiki(fresh):
-                deps.records.write(iid, "nowiki", {}); res["items"][iid] = "nowiki"; manifest.per_item.pop(iid, None)
-                manifest.ops = [op for op in manifest.ops if not (op.item_ids == [iid])]
-                _tag(deps, iid, [], ["sr:raw"])
+        # revalida nowiki ANTES do push: item que virou nowiki sai do lote inteiro (catálogo/log/página) e o plano é refeito
+        # — ops compartilhadas carregam todos os ids, editar o manifesto "cirurgicamente" deixava linha no catálogo e no log (review Opus M4)
+        late = [iid for iid in list(items) if (fresh := deps.raindrop.get(iid)) and is_nowiki(fresh)]
+        if late:
+            for iid in late:
+                deps.records.write(iid, "nowiki", {}); res["items"][iid] = "nowiki"; items.pop(iid, None); _tag(deps, iid, [], ["sr:raw"])
+            output = {**output, "items": [it for it in output.get("items", []) if str(it.get("raindrop_id")) not in {str(i) for i in late}]}
+            manifest = None
+            if not items:
+                deps.journal.finish_run(run_id, "empty", res); return res
+            continue
         try:
             apply(manifest, deps.store, deps.journal, cfg); break
         except ConflictError as e:

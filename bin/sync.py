@@ -104,6 +104,10 @@ class App:
         except Exception as e:
             self.journal.upsert_item(0, last_error=f"status.md: {e}")
         # catalog-index.jsonl: 1 linha por item com registro "distill" — alimenta o hook do Mac (Tarefa 24)
+        # Só reconstrói quando o conjunto de registros muda (2 downloads por item destilado — review Opus M5)
+        sig = hash(tuple(sorted((i, tuple(sorted(k))) for i, k in recs.items())))
+        if sig == getattr(self, "_catalog_sig", None) and (self.work / "catalog-index.jsonl").exists():
+            return
         try:
             lines = []
             for iid, kinds in sorted(recs.items()):
@@ -118,6 +122,7 @@ class App:
             ip = cfg.vault_path(f"{cfg.state_dir}/catalog-index.jsonl")
             ok, rev, _ = self.store.exists(ip)
             self.store.update(ip, idx.encode(), rev) if ok else self.store.add(ip, idx.encode())
+            self._catalog_sig = sig
         except Exception as e:
             self.journal.upsert_item(0, last_error=f"catalog-index.jsonl: {e}")
 

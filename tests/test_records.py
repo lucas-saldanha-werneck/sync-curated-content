@@ -39,3 +39,17 @@ def test_redo_generation_reopens_item():
     assert r.latest_distill(7)["catalog"]["name"] == "v1"
     assert r.request_redo(7) == "redo2"
     assert terminal_state({"captured", "distill", "wiki", "redo1", "nowiki"}) == "nowiki"   # opt-out não tem geração
+
+
+def test_request_redo_reopens_erro_item_without_distill():
+    # M3 (review Opus): item em sr:erro nunca chegou a ter registro distill; retry precisa reabri-lo mesmo assim
+    from lib.queue import needs_distill, needs_capture
+    store = make_store(); cfg = Config(); r = Records(store, cfg)
+    r.write(8, "meta", {}); r.write(8, "captured", {"raw": "raw/curated/y.md"}); r.write(8, "erro", {"error": "incompleto 3x"}); r.refresh()
+    assert r.state(8) == "erro" and not needs_distill(r.kinds(8))
+    assert r.request_redo(8) == "redo1"; r.refresh()
+    assert r.state(8) is None and needs_distill(r.kinds(8))
+    r.write(9, "meta", {}); r.write(9, "erro", {"error": "raw existe com outro id"}); r.refresh()   # erro na captura
+    assert r.request_redo(9) == "redo1"; r.refresh(); assert needs_capture({"id": 9}, r.kinds(9))
+    r.write(10, "meta", {}); r.write(10, "retry1", {}); r.refresh()
+    assert r.request_redo(10) is None                      # item só com retry de captura: retry comum (journal) basta

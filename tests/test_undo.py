@@ -59,3 +59,17 @@ def test_undo_unchanged_not_written(tmp_path):
     res = undo_run(rid, store, j, cfg)
     assert res["unchanged"] == ["wiki/a.md"] and res["reverted"] == [] and res["skipped"] == []
     assert store.download("/Projects/vault/wiki/a.md")[0] == b"a\n## X\nb\n"
+
+
+def test_undo_via_apply_strips_every_item_of_the_op(tmp_path):
+    # M1 (review Opus): apply() gravava 1 linha de op por arquivo com item_ids[0]; undo tirava só o 1º item do lote
+    from lib.applier import Manifest, Op, apply
+    store = make_store(); cfg = Config(); j = Journal(tmp_path / "j.db")
+    before = b"a\n## X\nb\n"; r0 = store.add("/Projects/vault/wiki/a.md", before)
+    after = ("a\n## X\n" + marker(7, "2026-09-11") + "\n- c7\n" + marker(8, "2026-09-11") + "\n- c8\nb\n").encode()
+    rid = j.start_run("distill", [7, 8])
+    m = Manifest(run_id=rid, ops=[Op(path="wiki/a.md", kind="update", before=before, after=after, rev_before=r0, item_ids=[7, 8], delta_sha="s")])
+    apply(m, store, j, cfg); j.finish_run(rid, "ok", {})
+    assert sorted(op["item_id"] for op in j.ops(rid)) == [7, 8]
+    res = undo_run(rid, store, j, cfg)
+    assert res["reverted"] == ["wiki/a.md"] and store.download("/Projects/vault/wiki/a.md")[0] == before

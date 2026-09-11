@@ -46,14 +46,9 @@ def _preexec_as_app_claude():
     (o runner é injetado), então a ausência de app-claude nunca derruba os testes.
     """
     def _switch():
-        pw = _app_claude_pw()
-        if pw is None:
-            return
-        try:
-            os.setgid(pw.pw_gid)
-            os.setuid(pw.pw_uid)
-        except PermissionError:
-            pass
+        # falha alta: se app-claude existe (produção) e a troca falhar, o claude NÃO roda (review Opus M2)
+        from lib.privs import drop_to
+        drop_to("app-claude")
     return _switch
 
 
