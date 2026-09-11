@@ -95,6 +95,24 @@ def test_x_video_groq_is_journaled(tmp_path):
     assert r.method == "fxtwitter" and "fala" in r.text and r.extra.get("video_method") == "groq"
 
 
+def test_child_crash_fails_fast(tmp_path):
+    """Fix round 2: um filho que morre ANTES de dar q.put() (os._exit, segfault, OOM) não pode
+    prender o pai até o fim do timeout inteiro — precisa falhar rápido."""
+    import os as _os
+    import time
+
+    def crash(url, cfg, jk, fk, **k):
+        _os._exit(1)
+
+    fns = {"article": crash}
+    item = {"id": 1, "link": "https://blog.com/a", "type": "article", "title": "", "tags": []}
+    t0 = time.monotonic()
+    r = fetch(item, tmp_path, Config(fetch_timeout_s=5), {}, journal=None, fns=fns, isolate=True)
+    elapsed = time.monotonic() - t0
+    assert r.method == "none" and "morreu" in r.error
+    assert elapsed < 2, f"deveria falhar rápido, levou {elapsed:.1f}s"
+
+
 def test_isolate_false_never_raises(tmp_path):
     """Fix round 1 (importante): com isolate=False uma exceção do fetcher não pode
     propagar — vira FetchResult(method="none", error=...)."""

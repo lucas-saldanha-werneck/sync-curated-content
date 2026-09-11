@@ -1,6 +1,6 @@
 """Roteia a URL para o fetcher certo e roda isolado (processo filho, uid app-fetch, timeout)."""
 from __future__ import annotations
-import multiprocessing as mp, os, pwd, queue, re, signal, sys
+import multiprocessing as mp, os, pwd, queue, re, signal, sys, time
 from pathlib import Path
 from lib.fetch_types import FetchResult
 
@@ -35,20 +35,39 @@ def _run_isolated(fn, args, kwargs, timeout_s: int, env: dict):
     ctx = mp.get_context("fork"); q = ctx.Queue()
     p = ctx.Process(target=_worker, args=(q, fn, args, kwargs, env)); p.start()
     try:
-        status, val = q.get(timeout=timeout_s)         # drena ANTES do join: resultado grande (frames) trava no pipe senão
-    except queue.Empty:
-        try:
-            os.killpg(p.pid, signal.SIGKILL)            # mata o grupo inteiro (worker + netos yt-dlp/ffmpeg)
-        except (ProcessLookupError, PermissionError, OSError):
-            p.kill()
+        deadline = time.monotonic() + timeout_s
+        while True:
+            try:
+                status, val = q.get(timeout=0.5)      # poll: nunca fica preso no timeout inteiro
+                break
+            except queue.Empty:
+                if not p.is_alive():
+                    # filho morreu (os._exit/segfault/OOM) antes de dar put() — falha rápido,
+                    # mas confere uma última vez pra evitar corrida com o put() em andamento
+                    try:
+                        status, val = q.get_nowait()
+                        break
+                    except queue.Empty:
+                        p.join(5)
+                        return f"erro: processo morreu sem resultado (exit {p.exitcode})"
+                if time.monotonic() > deadline:
+                    try:
+                        os.killpg(p.pid, signal.SIGKILL)   # mata o grupo inteiro (worker + netos yt-dlp/ffmpeg)
+                    except (ProcessLookupError, PermissionError, OSError):
+                        p.kill()
+                    p.join(5)
+                    if p.is_alive():
+                        print(f"fetcher: aviso — processo filho pid={p.pid} sobreviveu ao SIGKILL", file=sys.stderr)
+                    return "timeout"
         p.join(5)
         if p.is_alive():
-            print(f"fetcher: aviso — processo filho pid={p.pid} sobreviveu ao SIGKILL", file=sys.stderr)
-        return "timeout"
-    p.join(5)
-    if p.is_alive():
-        p.kill(); p.join(5)
-    return val if status == "ok" else f"erro: {val}"
+            p.kill(); p.join(5)
+        return val if status == "ok" else f"erro: {val}"
+    finally:
+        try:
+            q.close(); q.join_thread()
+        except Exception:
+            pass
 
 def fetch(item: dict, work: Path, cfg, secrets: dict, journal, fns: dict | None = None, isolate: bool = True) -> FetchResult:
     from lib.fetch_video import fetch_video
@@ -94,9 +113,10 @@ def fetch(item: dict, work: Path, cfg, secrets: dict, journal, fns: dict | None 
                 v = f["video"](*vargs, groq_seconds_used_today=used)
             except Exception as e:
                 v = f"{type(e).__name__}: {e}"
-        if not isinstance(v, str) and v is not None and v.text:
-            res.text += "\n\nTranscrição do vídeo: " + v.text; res.frames = v.frames; res.duration_s = v.duration_s
-            res.extra["video_method"] = v.method
+        if not isinstance(v, str) and v is not None:
+            if v.text:
+                res.text += "\n\nTranscrição do vídeo: " + v.text; res.frames = v.frames; res.duration_s = v.duration_s
+                res.extra["video_method"] = v.method
             if journal and v.method == "groq" and v.duration_s:
                 journal.add_groq_seconds(int(v.duration_s))
     if journal and res.method == "groq" and res.duration_s:
