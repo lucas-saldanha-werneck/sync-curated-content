@@ -9,7 +9,7 @@ APIFY = "https://api.apify.com/v2/acts/{actor}/run-sync-get-dataset-items?token=
 
 def apify_run_sync(actor: str, token: str, payload: dict, opener=None, timeout: int = 300) -> list[dict]:
     url = APIFY.format(actor=actor, token=urllib.parse.quote(token), t=timeout)
-    if opener:                                            # testes: opener devolve (bytes, url, headers)
+    if opener:                                            # opener aqui é só para teste; não envia payload
         body, _, _ = opener(url, timeout=timeout + 30, headers={"Content-Type": "application/json"})
         return json.loads(body.decode("utf-8", "ignore"))
     req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"}, method="POST")
@@ -23,8 +23,8 @@ def fetch_instagram(url, work, cfg, apify_token, groq_key, opener=None, video_fn
         items = apify_run_sync("apify~instagram-scraper", apify_token, {"directUrls": [url], "resultsLimit": 1}, opener=opener)
     except Exception as e:
         return FetchResult(platform="instagram", method="none", error=f"apify: {e}")
-    if not items:
-        return FetchResult(platform="instagram", method="none", error="apify: 0 itens")
+    if not isinstance(items, list) or not items:
+        return FetchResult(platform="instagram", method="none", error=f"apify: resposta inválida: {str(items)[:120]}")
     it = items[0]; parts = []
     if it.get("caption"): parts.append("Legenda: " + it["caption"])
     r = FetchResult(platform="instagram", method="apify", author=it.get("ownerUsername"), title=(it.get("caption") or "")[:80] or None)
@@ -47,8 +47,8 @@ def fetch_linkedin(url, cfg, apify_token, opener=None, actor: str = "apimaestro~
         items = apify_run_sync(actor, apify_token, {"postUrl": url}, opener=opener)
     except Exception as e:
         return FetchResult(platform="linkedin", method="none", error=f"apify: {e}")
-    if not items:
-        return FetchResult(platform="linkedin", method="none", error="apify: 0 itens")
+    if not isinstance(items, list) or not items:
+        return FetchResult(platform="linkedin", method="none", error=f"apify: resposta inválida: {str(items)[:120]}")
     it = items[0]
     text = it.get("text") or it.get("postText") or it.get("content") or ""
     author = it.get("author"); author = author.get("name") if isinstance(author, dict) else it.get("authorName")

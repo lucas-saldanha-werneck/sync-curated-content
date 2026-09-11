@@ -20,3 +20,13 @@ def test_x_text():
 
 def test_linkedin_without_token():
     assert fetch_linkedin("https://linkedin.com/posts/x", Config(), None).method == "none"
+
+def test_instagram_non_list_response(tmp_path):
+    opener = lambda u, **k: (json.dumps({"error": {"type": "actor-failed"}}).encode(), u, {})
+    r = fetch_instagram("https://instagram.com/p/1", tmp_path, Config(), "tok", "gk", opener=opener)
+    assert r.method == "none" and "apify" in r.error
+
+def test_linkedin_non_list_response():
+    opener = lambda u, **k: (json.dumps({"error": {"type": "actor-failed"}}).encode(), u, {})
+    r = fetch_linkedin("https://linkedin.com/posts/x", Config(), "tok", opener=opener)
+    assert r.method == "none" and "apify" in r.error
