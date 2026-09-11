@@ -4,7 +4,7 @@ import re
 
 class GrammarError(ValueError): ...
 
-CTRL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f​-‏  ﻿]")
+CTRL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f​-‏  ﻿]")
 WIKILINK = re.compile(r"\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]")
 MDLINK = re.compile(r"\]\(([^)\s]+)\)")
 URL = re.compile(r"https?://[^\s)\]]+")

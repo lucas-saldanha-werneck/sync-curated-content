@@ -3,8 +3,11 @@ from lib.grammar import validate_text, validate_triggers, validate_type, Grammar
 
 PAGES = {"energia-e-recarga", "pessoal"}
 
-@pytest.mark.parametrize("bad", ["a <b>", "x <!-- curated:r1 -->", "![[img.png]]", "![a](b)", "```py", "---\nfront", "veja curated:r9",
-                                 "[l](javascript:alert(1))", "[l](obsidian://open)", "[[pagina-inexistente]]", "zero​width", "https://outro.com/x"])
+test_bad = ["a <b>", "x <!-- curated:r1 -->", "![[img.png]]", "![a](b)", "```py"]
+test_bad.append("---\nfront")
+test_bad.extend(["veja curated:r9", "[l](javascript:alert(1))", "[l](obsidian://open)", "[[pagina-inexistente]]", "zero​width", "https://outro.com/x"])
+
+@pytest.mark.parametrize("bad", test_bad)
 def test_rejects(bad):
     with pytest.raises(GrammarError):
         validate_text(bad, 600, PAGES, source_url="https://fonte.com/a")
