@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object", "additionalProperties": false, "required": ["items"],
+  "properties": {"items": {"type": "array", "maxItems": 5, "items": {
+    "type": "object", "additionalProperties": false,
+    "required": ["raindrop_id", "decision", "reason", "claims", "new_page", "catalog", "supersedes"],
+    "properties": {
+      "raindrop_id": {"type": "integer"},
+      "decision": {"type": "string", "enum": ["wiki", "parcial", "skip"]},
+      "reason": {"type": "string", "maxLength": 200},
+      "claims": {"type": "array", "maxItems": 7, "items": {"type": "object", "additionalProperties": false,
+        "required": ["page", "anchor", "text"],
+        "properties": {"page": {"type": "string", "pattern": "^wiki/[a-z0-9-]+\\.md$"},
+                       "anchor": {"type": "string", "maxLength": 200, "description": "linha exata (heading ## ou ###) da página onde inserir; string vazia = fim do arquivo"},
+                       "text": {"type": "string", "maxLength": 600}}}},
+      "new_page": {"anyOf": [{"type": "null"}, {"type": "object", "additionalProperties": false, "required": ["name", "summary", "body"],
+        "properties": {"name": {"type": "string", "pattern": "^[a-z0-9-]{3,60}$"}, "summary": {"type": "string", "maxLength": 200}, "body": {"type": "string", "maxLength": 6000}}}]},
+      "catalog": {"type": "object", "additionalProperties": false, "required": ["name", "type", "what", "when", "triggers", "implement"],
+        "properties": {"name": {"type": "string", "maxLength": 80}, "type": {"type": "string"}, "what": {"type": "string", "maxLength": 200},
+                       "when": {"type": "string", "maxLength": 200}, "triggers": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 40}},
+                       "implement": {"type": "boolean"}}},
+      "supersedes": {"type": "array", "maxItems": 3, "items": {"type": "object", "additionalProperties": false, "required": ["page", "old_text", "note"],
+        "properties": {"page": {"type": "string"}, "old_text": {"type": "string", "maxLength": 400}, "note": {"type": "string", "maxLength": 200}}}}
+    }}}}
+}

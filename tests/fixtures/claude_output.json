@@ -1,0 +1,23 @@
+{
+  "items": [
+    {
+      "raindrop_id": 1,
+      "decision": "wiki",
+      "reason": "artigo com dados concretos de tarifa e um produto para o catálogo",
+      "claims": [
+        {"page": "wiki/energia-e-recarga.md", "anchor": "## Tarifa", "text": "O inversor X suporta recarga trifásica até 22kW com eficiência declarada de 97%."},
+        {"page": "wiki/energia-e-recarga.md", "anchor": "## Tarifa", "text": "A tarifa branca reduz o custo de recarga noturna em até 30% comparada à convencional."}
+      ],
+      "new_page": null,
+      "catalog": {
+        "name": "Inversor X",
+        "type": "ferramenta",
+        "what": "Inversor trifásico para recarga de veículo elétrico",
+        "when": "Quando precisar dimensionar recarga trifásica de alta potência",
+        "triggers": ["inversor", "solar"],
+        "implement": false
+      },
+      "supersedes": []
+    }
+  ]
+}
