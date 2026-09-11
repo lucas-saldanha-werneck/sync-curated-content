@@ -34,6 +34,23 @@ class Journal:
             fh.close(); return False
         self._lock_fh = fh; fh.seek(0); fh.truncate(); fh.write(str(os.getpid())); fh.flush(); return True
 
+    def release_lock(self) -> None:
+        if self._lock_fh:
+            fcntl.flock(self._lock_fh, fcntl.LOCK_UN)
+            self._lock_fh.close()
+            self._lock_fh = None
+
+    def close(self) -> None:
+        self.release_lock()
+        self.con.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
+
     def upsert_item(self, item_id: int, **cols) -> None:
         cols["updated_at"] = _now()
         cur = self.con.execute("SELECT id FROM items WHERE id=?", (item_id,)).fetchone()
@@ -89,6 +106,12 @@ class Journal:
         self.con.execute("INSERT INTO requests(cmd,arg,ts) VALUES(?,?,?)", (cmd, arg, _now()))
 
     def pop_requests(self) -> list[dict]:
-        rows = [dict(r) for r in self.con.execute("SELECT * FROM requests ORDER BY rid")]
-        self.con.execute("DELETE FROM requests")
-        return rows
+        self.con.execute("BEGIN IMMEDIATE")
+        try:
+            rows = [dict(r) for r in self.con.execute("SELECT * FROM requests ORDER BY rid")]
+            self.con.execute("DELETE FROM requests")
+            self.con.execute("COMMIT")
+            return rows
+        except Exception:
+            self.con.execute("ROLLBACK")
+            raise

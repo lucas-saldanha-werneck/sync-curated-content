@@ -7,6 +7,7 @@ def test_item_roundtrip(tmp_path):
     it = j.get_item(1)
     assert it["state"] == "raw" and it["link"] == "https://x" and it["retries"] == 1
     assert [i["id"] for i in j.items_in_state("raw")] == [1]
+    j.close()
 
 def test_run_and_ops(tmp_path):
     j = Journal(tmp_path / "j.db")
@@ -17,11 +18,15 @@ def test_run_and_ops(tmp_path):
     assert j.ops(rid)[0]["rev_after"] == "rev2"
     j.finish_run(rid, "ok", {"items": 2})
     assert j.runs_today("distill", "America/Sao_Paulo") == 1
+    j.close()
 
 def test_lock_is_singleton(tmp_path):
     a = Journal(tmp_path / "j.db"); b = Journal(tmp_path / "j.db")
     assert a.acquire_lock() is True
     assert b.acquire_lock() is False
+    a.release_lock()
+    assert b.acquire_lock() is True
+    a.close(); b.close()
 
 def test_groq_and_requests(tmp_path):
     j = Journal(tmp_path / "j.db")
@@ -30,3 +35,13 @@ def test_groq_and_requests(tmp_path):
     j.enqueue_request("now", None); j.enqueue_request("retry", "42")
     assert [r["cmd"] for r in j.pop_requests()] == ["now", "retry"]
     assert j.pop_requests() == []
+    j.close()
+
+def test_pop_requests_atomic_returning(tmp_path):
+    j = Journal(tmp_path / "j.db")
+    j.enqueue_request("cmd1", None); j.enqueue_request("cmd2", "arg")
+    rows = j.pop_requests()
+    assert len(rows) == 2
+    assert [r["cmd"] for r in rows] == ["cmd1", "cmd2"]
+    assert j.pop_requests() == []
+    j.close()

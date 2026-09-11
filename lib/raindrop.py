@@ -33,8 +33,8 @@ class RaindropClient:
         status, data = self.http(method, url, body)
         if status == 429:
             wait = 60
-            try: wait = max(1, min(60, int(data.get("reset") or 0) - int(time.time())))
-            except (TypeError, ValueError): pass
+            try: wait = max(1, min(60, int((data if isinstance(data, dict) else {}).get("reset") or 0) - int(time.time())))
+            except (TypeError, ValueError, AttributeError): pass
             time.sleep(wait); status, data = self.http(method, url, body)
         if status >= 400:
             raise RuntimeError(f"raindrop {method} {url} → {status} {data}")
