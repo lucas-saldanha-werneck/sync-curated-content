@@ -19,3 +19,12 @@ def test_undo_repo_commits(tmp_path):
     assert sha1 and sha2 and sha1 != sha2
     assert repo.show(sha1, "wiki/a.md") == b"v1" and repo.show(sha2, "wiki/a.md") == b"v2"
     assert repo.commit_snapshot(Snap({"wiki/a.md": (b"v2", "r2")}), "nada") == ""
+
+
+def test_undo_repo_drops_deleted_files(tmp_path):
+    repo = UndoRepo(tmp_path / "wiki-git")
+    sha1 = repo.commit_snapshot(Snap({"wiki/a.md": (b"a", "r1"), "wiki/b.md": (b"b", "r1")}), "add two files")
+    sha2 = repo.commit_snapshot(Snap({"wiki/a.md": (b"a", "r1")}), "delete b")
+    assert sha1 and sha2 and sha1 != sha2
+    assert repo.show(sha1, "wiki/b.md") == b"b"
+    assert repo.show(sha2, "wiki/b.md") is None

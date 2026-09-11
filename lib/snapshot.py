@@ -50,10 +50,24 @@ class UndoRepo:
             p = self.path / rel
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_bytes(data)
+        # Remove files no longer in snap
+        for p in self.path.rglob("*"):
+            if p.is_file() and p.relative_to(self.path).parts[0] != ".git":
+                rel = str(p.relative_to(self.path))
+                if rel not in snap.files:
+                    p.unlink()
+        # Clean empty dirs (skip .git)
+        for p in sorted(self.path.rglob("*"), key=lambda x: -len(x.parts)):
+            if p.is_dir() and p.parts[-1] != ".git" and not any(p.iterdir()):
+                p.rmdir()
         self._git("add", "-A")
         r = self._git("commit", "-q", "-m", message, check=False)
         if r.returncode != 0:
-            return ""                                   # nada a commitar
+            # Distinguish "nothing to commit" from real failure
+            status = self._git("status", "--porcelain").stdout.strip()
+            if not status:
+                return ""  # nothing to commit
+            raise RuntimeError(f"git commit failed: {r.stderr}")
         return self._git("rev-parse", "HEAD").stdout.strip()
 
     def show(self, sha: str, rel: str) -> bytes | None:
