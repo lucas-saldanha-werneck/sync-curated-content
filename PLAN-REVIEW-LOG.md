@@ -133,3 +133,30 @@ Rodado na VPS `nova` via `scripts/spike.sh` (2 execuções; a 1ª expôs um bug 
 **Ambiente da VPS (Ubuntu 22.04) não tinha de fábrica:** `pip`/`ffmpeg`/`yt-dlp`. Resolvido com `apt-get install -y ffmpeg python3-venv python3-pip` (pacotes de sistema) e uma venv dedicada `/opt/sync-raindrop/.spike-venv` para `dropbox`+`yt-dlp[default]` — o próprio `scripts/spike.sh` cria/instala isso sozinho se faltar.
 
 Detalhes completos, comandos exatos e saídas (segredos mascarados) em `task-0-report.md`.
+
+## 2026-09-11 — Task 26 (prova em produção)
+
+**Step 1 (prova ao vivo):** coberta pelos itens reais do Lucas — pipeline provado fim a fim às 05:47 (run `20260911-054520-197102`: r1707712786 "What is a Decision Matrix?" → `sr:wiki`, claims em `wiki/produtividade-pessoal.md`, catálogo e log; chegou no Dropbox do Mac). Não foram criados itens de teste.
+
+**Step 2 (`undo` + `retry`):** `sync.py undo 20260911-054520-197102` → `reverted: [wiki/produtividade-pessoal.md]`, `skipped: [ferramentas-e-ideias.md, log/2026-09_curated.md]` (rev mudou por lotes posteriores — CAS protegeu, como desenhado). Achado: o 1º claim tinha quebras de linha (3 linhas sob 1 marcador) → `strip_markers` deixou resíduo ("Fonte: …"). Fix e7eada0: claim é sempre UMA linha (`_one_line` no applier; cabeçalho markdown no início cai) + teste `test_claim_is_always_one_line_so_undo_strips_it_whole`. Resíduo limpo à mão via CAS. `retry 1707712786` enfileirado 06:06 com teto +1 (MAX_BATCHES_PER_DAY=13 temporário) — resultado abaixo.
+
+**Step 4 (`backfill --all --dry-run`, 06:03):** pendentes 80 em 28 domínios; top: youtube.com 42, github.com 7, cloudynights.com 4, lensrentals.com 2, imatest.com 2, demais 1 cada. Groq: 0 s usados hoje (YouTube bloqueado por IP do datacenter → sem áudio para transcrever; estimativa de Groq só faz sentido quando houver rota para o YouTube — v1.1). Backfill real NÃO rodado (na prática a captura do loop já cobriu o histórico: 119 bookmarks → 80 captured + 34 parcial + 3 wiki + 2 skip no journal).
+
+## 2026-09-11 — Revisões finais (branch impl, antes do merge)
+
+Duas revisões independentes, read-only, em paralelo sobre o `impl`: **Opus** (general-purpose) e **Codex** (gpt-5-codex via codex-rescue). Ambas: VERDICT FIX FIRST. Todos os achados materiais confirmados no código e/ou na VPS, corrigidos por TDD (teste que reproduz → fix), 153 testes.
+
+**Opus M1–M5** (commit bc9b8fb):
+- M1 `undo` revertia só o 1º item do lote (apply gravava 1 op/arquivo com item_ids[0]) → 1 op por item.
+- M2 sandbox de uid nunca engatava: `gosu app` zerava as capabilities, `os.setuid` p/ app-claude/app-fetch falhava calado → `claude -p` e yt-dlp rodavam como `app` (dono do token). Fix: entrypoint com `setpriv --ambient-caps +setuid,+setgid`; `lib/privs.drop_to` troca uid, ZERA caps no filho, liga no_new_privs e **falha alto**. Verificado na VPS: pid 1 CapAmb=0xc0; filho→uid 10003, CapEff=0.
+- M3 `retry` não tirava item de `sr:erro` (guarda exigia distill) → reabre item terminal sem distill.
+- M4 `nowiki` tardio ainda escrevia catálogo/log (ops compartilhadas) → tira o item e refaz o plano.
+- M5 health baixava 2 arquivos/item a cada 30 s → catalog-index só quando o conjunto de registros muda.
+
+**Codex #1–#4** (commit 47329e3; #1 = Opus M2, já coberto):
+- #2 (HIGH) contador de retry compartilhado captura×destilação → captura OK zera `retries` (destilação tem orçamento próprio).
+- #3 (HIGH) no re-plan após ConflictError, a página nova que o item já criou virava "página nova já existe" → marcador do item presente = idempotente.
+- #4 (MEDIUM) `undo` de página nova deixava stub e bloqueava o nome → `DropboxStore.delete` (files_delete_v2 + CAS) e undo apaga o arquivo.
+- Opus should-fix junto: linha do log não duplica no re-plan; sub-lotes do split limpam o próprio workspace.
+
+**Parked p/ v1.1** (não bloqueiam merge, registrados no ledger): espaçamento entre retries de captura (DESIGN §10 "dia seguinte"; hoje 3 tentativas em ~90 s); poll relê o Raindrop inteiro sem `since`; `runs/<run_id>/manifest.json` do DESIGN §4.3 nunca foi implementado (retry recomputa via snapshot + idempotência por marcador — agora completo p/ new_page com o #3); ordem de captura pega os mais antigos primeiro; comentário de auditoria no `apify_run_sync`. Prova live do redo: item r1707712786 com `redo1`, `needs_distill=True`, `gen_kind=distill1` (verificado na VPS) — re-aplica no próximo lote.
