@@ -4,6 +4,9 @@ services:
     image: sync-raindrop:local
     container_name: sync-raindrop
     restart: unless-stopped
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
+      - net.ipv6.conf.default.disable_ipv6=1
     read_only: true
     tmpfs:
       - /tmp:size=4g,exec
