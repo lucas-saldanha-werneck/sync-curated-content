@@ -42,6 +42,8 @@ class Config:
     claude_timeout_s: int = 900
     fetch_timeout_s: int = 600
     retry_max: int = 3
+    youtube_apify_actor: str = "codepoetry~youtube-transcript-ai-scraper"   # failover do YouTube; yt-dlp é primário
+    youtube_apify_fallback: bool = True
     types_vocab: list = field(default_factory=lambda: ["skill", "plugin", "ferramenta", "metodo", "ideia", "conteudo"])
     triggers_vocab_path: str = "config/triggers.txt"
     # segredos

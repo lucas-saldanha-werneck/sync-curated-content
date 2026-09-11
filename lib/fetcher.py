@@ -82,7 +82,7 @@ def fetch(item: dict, work: Path, cfg, secrets: dict, journal, fns: dict | None 
     used = journal.count_groq_seconds_today(cfg.tz) if journal else 0
     groq = secrets.get("groq") or ""
     if plat in ("youtube", "tiktok"):
-        call = (f["video"], (item["link"], work, cfg, groq, plat), {"groq_seconds_used_today": used})
+        call = (f["video"], (item["link"], work, cfg, groq, plat), {"groq_seconds_used_today": used, "apify_token": secrets.get("apify")})
     elif plat == "instagram":
         call = (f["instagram"], (item["link"], work, cfg, secrets.get("apify"), groq), {})
     elif plat == "linkedin":
