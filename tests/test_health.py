@@ -50,3 +50,15 @@ def test_auth_probe_passes_preexec_closure():
         return type("R", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
     claude_auth_probe(Config(), "token", runner=fake_runner)
     assert callable(captured_kwargs["preexec_fn"]) and captured_kwargs["preexec_fn"].__name__ == "_switch"
+
+
+def test_loop_vivo_uses_heartbeat_not_only_the_poll(tmp_path):
+    """Durante backfill sustentado o ciclo fica horas dentro dos lotes e não faz poll novo.
+    O loop está VIVO — o batimento tem que contar, senão o monitor alarma à toa (2026-09-12)."""
+    j, now = base(tmp_path)
+    h = run_checks(j, {}, Config(), now, now - timedelta(minutes=40), 60.0, now - timedelta(hours=1), tmp_path,
+                   heartbeat_ts=now - timedelta(seconds=20))
+    assert h.checks["loop_vivo"][0]
+    parado = run_checks(j, {}, Config(), now, now - timedelta(minutes=40), 60.0, now - timedelta(hours=1), tmp_path,
+                        heartbeat_ts=now - timedelta(minutes=40))
+    assert not parado.checks["loop_vivo"][0]

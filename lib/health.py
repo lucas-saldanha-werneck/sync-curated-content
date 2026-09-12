@@ -11,9 +11,13 @@ from lib.distill import _preexec_as_app_claude
 class Health:
     ok: bool; checks: dict; ts: str
 
-def run_checks(journal, records_map, cfg, now, last_poll_ts, disk_free_pct, auth_ok_ts, work_dir) -> "Health":
+def run_checks(journal, records_map, cfg, now, last_poll_ts, disk_free_pct, auth_ok_ts, work_dir,
+               heartbeat_ts=None) -> "Health":
     c = {}
-    c["loop_vivo"] = (last_poll_ts is not None and (now - last_poll_ts) <= timedelta(minutes=2), f"último poll {last_poll_ts}")
+    # "vivo" = o loop deu sinal, não necessariamente um poll novo: em backfill sustentado o ciclo passa
+    # horas dentro dos lotes sem voltar a ler o Raindrop, e o monitor alarmava à toa (2026-09-12).
+    vivo_ts = max([t for t in (last_poll_ts, heartbeat_ts) if t is not None], default=None)
+    c["loop_vivo"] = (vivo_ts is not None and (now - vivo_ts) <= timedelta(minutes=2), f"último batimento {vivo_ts}")
     c["auth"] = (auth_ok_ts is not None and (now - auth_ok_ts) <= timedelta(hours=24), f"auth ok em {auth_ok_ts}")
     old = []
     for st in ("captured", "retry"):

@@ -42,7 +42,7 @@ class App:
         self.bat = BatchDeps(cfg=cfg, store=self.store, records=self.records, raindrop=self.raindrop, journal=self.journal,
                              snapshot=Snapshot(self.store, cfg), undo_repo=UndoRepo(self.work / "wiki-git"), token=cfg.claude_oauth_token,
                              prompt_template=(SKILL / "prompts/distill.md").read_text(encoding="utf-8"), schema_path=SKILL / "schema/distill.json", triggers_vocab=vocab)
-        self.last_poll = None; self.auth_ok = None; self.first_pending = None; self.public_dir = Path(env.get("HEALTH_PUBLIC_DIR", "/public/sync-raindrop"))
+        self.last_poll = None; self.heartbeat = None; self.auth_ok = None; self.first_pending = None; self.public_dir = Path(env.get("HEALTH_PUBLIC_DIR", "/public/sync-raindrop"))
 
     def now(self): return datetime.now(timezone.utc).astimezone(ZoneInfo(self.cfg.tz))
 
@@ -83,6 +83,7 @@ class App:
                 break
             recs = self.records.refresh(); ready = [iid for iid, k in recs.items() if needs_distill(k)]
             self.first_pending = self.now() if ready else None
+            self.heartbeat = self.now(); self.health(recs)     # backfill longo não pode deixar o health velho
             if res.get("status") in ("distill_invalid", "distill_conflict"): break
         for req in self.journal.pop_requests():
             if req["cmd"] == "retry": self.retry(int(req["arg"]))
@@ -96,7 +97,8 @@ class App:
             ok, _ = claude_auth_probe(cfg, cfg.claude_oauth_token)
             if ok: self.auth_ok = self.now()
         free = shutil.disk_usage(self.work).free / shutil.disk_usage(self.work).total * 100
-        h = run_checks(self.journal, recs, cfg, self.now(), self.last_poll, free, self.auth_ok, self.work)
+        h = run_checks(self.journal, recs, cfg, self.now(), self.last_poll, free, self.auth_ok, self.work,
+                       heartbeat_ts=self.heartbeat)
         write_health_files(h, self.public_dir, self.work); ping_uptimerobot(cfg.uptimerobot_url, h)
         md = status_md(self.journal, recs, cfg, h, self.journal.count_groq_seconds_today(cfg.tz))
         (self.work / "status.md").write_text(md, encoding="utf-8")
