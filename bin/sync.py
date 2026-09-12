@@ -77,19 +77,29 @@ class App:
                             shutil.rmtree(self.work / "distill" / sres["run_id"], ignore_errors=True)
                         except Exception as e:
                             self.journal.upsert_item(iid, last_error=f"batch: {e}")
+                        self.beat(recs)     # split roda até 5 sub-lotes seguidos: cada um dá batimento
             except Exception as e:
                 print(f"erro no lote {batch}: {type(e).__name__}: {e}\n{traceback.format_exc()[-1500:]}", file=sys.stderr, flush=True)
                 for iid in batch: self.journal.upsert_item(iid, last_error=f"batch: {type(e).__name__}: {e}")
                 break
             recs = self.records.refresh(); ready = [iid for iid, k in recs.items() if needs_distill(k)]
             self.first_pending = self.now() if ready else None
-            self.heartbeat = self.now(); self.health(recs)     # backfill longo não pode deixar o health velho
+            self.beat(recs)                                    # backfill longo não pode deixar o health velho
             if res.get("status") in ("distill_invalid", "distill_conflict"): break
         for req in self.journal.pop_requests():
             if req["cmd"] == "retry": self.retry(int(req["arg"]))
             elif req["cmd"] == "undo": undo_run(req["arg"], self.store, self.journal, cfg)
         self.health(recs)
         return out
+
+    def beat(self, recs):
+        """Batimento do loop + republica o health. Chamado depois de CADA lote (inclusive sub-lote de split),
+        senão o status fica horas velho num backfill e o monitor externo alarma com o serviço saudável."""
+        self.heartbeat = self.now()
+        try:
+            self.health(recs)
+        except Exception as e:
+            self.journal.upsert_item(0, last_error=f"health: {e}")   # health nunca derruba o lote seguinte
 
     def health(self, recs):
         cfg = self.cfg
