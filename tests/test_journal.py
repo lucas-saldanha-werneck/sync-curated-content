@@ -57,3 +57,27 @@ def test_runs_today_counts_only_runs_that_reached_claude(tmp_path):
     j.start_run("distill", [5])                                   # órfão "running"
     assert j.runs_today("distill", "America/Sao_Paulo") == 2
     j.close()
+
+def test_consecutive_invalid_counts_only_the_tail(tmp_path):
+    """Alimenta a trava do should_run: lotes que morreram sem produzir saída válida, em sequência."""
+    j = Journal(tmp_path / "j2.db")
+    assert j.consecutive_invalid("distill") == 0
+    j.finish_run(j.start_run("distill", [1]), "ok", {})
+    j.finish_run(j.start_run("distill", [2]), "distill_invalid", {})
+    j.finish_run(j.start_run("distill", [3]), "distill_invalid", {})
+    assert j.consecutive_invalid("distill") == 2
+    j.finish_run(j.start_run("distill", [4]), "ok", {})          # lote bom zera a trava
+    assert j.consecutive_invalid("distill") == 0
+    j.start_run("distill", [5])                                   # lote em andamento não conta nem zera
+    assert j.consecutive_invalid("distill") == 0
+    j.close()
+
+def test_consecutive_invalid_ignores_runs_before_since(tmp_path):
+    """Reiniciar o container = intervenção do operador: a trava zera e o serviço tenta de novo."""
+    j = Journal(tmp_path / "j3.db")
+    j.finish_run(j.start_run("distill", [1]), "distill_invalid", {})
+    j.finish_run(j.start_run("distill", [2]), "distill_invalid", {})
+    assert j.consecutive_invalid("distill") == 2
+    assert j.consecutive_invalid("distill", since="2020-01-01T00:00:00-03:00") == 2   # boot antigo: conta tudo
+    assert j.consecutive_invalid("distill", since="2099-01-01T00:00:00-03:00") == 0   # boot depois: trava zerada
+    j.close()

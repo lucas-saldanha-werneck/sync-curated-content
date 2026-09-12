@@ -168,3 +168,34 @@ def test_late_nowiki_writes_nothing_for_that_item_in_a_two_item_batch(tmp_path):
     cat, _ = store.download("/Projects/vault/wiki/ferramentas-e-ideias.md"); assert b"<!-- r1 -->" in cat and b"<!-- r2 -->" not in cat
     log, _ = store.download("/Projects/vault/wiki/log/2026-09_curated.md"); assert b" r1 " in log and b" r2 " not in log
     deps.records.refresh(); assert deps.records.state(2) == "nowiki" and "distill" not in deps.records.kinds(2)
+
+
+def test_should_run_breaker_stops_repeated_invalid_runs():
+    """Bug 2026-09-12: 85 lotes seguidos morreram em distill_invalid (claude rc=1, workspace sem trust).
+    Nenhum item progrediu e a janela das 3h ignora o teto → queima de cota sem fim."""
+    from lib.config import Config
+    cfg = Config(); now = datetime(2026, 9, 11, 14, 0)
+    madrugada = datetime(2026, 9, 12, 3, 10)
+    assert should_run([1] * 5, now, now, cfg, 0, consecutive_invalid=2)
+    assert not should_run([1] * 5, now, now, cfg, 0, consecutive_invalid=3)
+    assert not should_run([1] * 5, now, madrugada, cfg, 0, consecutive_invalid=3)   # janela noturna não fura a trava
+
+
+def test_should_run_night_window_is_bounded():
+    """A janela das 3h drena o backlog (DESIGN §79), mas não pode ser ilimitada."""
+    from lib.config import Config
+    cfg = Config(); madrugada = datetime(2026, 9, 12, 3, 10)
+    assert should_run([1] * 5, madrugada, madrugada, cfg, cfg.max_batches_per_day, consecutive_invalid=0)
+    assert not should_run([1] * 5, madrugada, madrugada, cfg, cfg.max_batches_per_day * 2, consecutive_invalid=0)
+
+
+def test_breaker_since_slides_so_the_trava_destrava_sozinha():
+    """A trava não pode exigir restart: falha transitória (cota 429, rede) precisa voltar sozinha.
+    A janela desliza → as falhas velhas saem da conta e um lote de prova roda."""
+    from lib.batch import breaker_since, BREAKER_COOLDOWN_MIN
+    boot = "2026-09-12T03:00:00-03:00"
+    logo_apos = datetime.fromisoformat("2026-09-12T03:05:00-03:00")
+    assert breaker_since(boot, logo_apos) == boot                      # perto do boot, o boot manda
+    bem_depois = datetime.fromisoformat("2026-09-12T09:00:00-03:00")
+    esperado = (bem_depois - timedelta(minutes=BREAKER_COOLDOWN_MIN)).isoformat(timespec="seconds")
+    assert breaker_since(boot, bem_depois) == esperado                 # depois, a janela deslizante manda

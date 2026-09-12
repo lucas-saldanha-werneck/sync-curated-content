@@ -33,11 +33,6 @@ def _app_claude_pw():
         return None
 
 
-def _app_claude_ids() -> tuple[int, int] | None:
-    pw = _app_claude_pw()
-    return (pw.pw_uid, pw.pw_gid) if pw else None
-
-
 def _preexec_as_app_claude():
     """preexec_fn: troca o processo filho para o uid/gid de app-claude quando ele existir.
 
@@ -49,6 +44,7 @@ def _preexec_as_app_claude():
         # falha alta: se app-claude existe (produção) e a troca falhar, o claude NÃO roda (review Opus M2)
         from lib.privs import drop_to
         drop_to("app-claude")
+        os.umask(0o007)                  # arquivos/dirs que o claude criar (.cc/.home) ficam graváveis pelo grupo → app limpa
     return _switch
 
 
@@ -69,21 +65,33 @@ def build_workspace(ws: Path, snap: Snap, raws: dict[str, bytes], frames: dict[s
     (ws / ".claude/settings.json").write_text(json.dumps({"permissions": {"allow": ["Read(./**)", "Glob(*)", "Grep(*)"], "deny": DENY}}, indent=1))
     (ws / ".cc").mkdir(exist_ok=True)
     (ws / ".home").mkdir(exist_ok=True)
+    # Workspace descartável e novo a cada lote: sem isso o claude ABORTA (rc=1, "this workspace has not been
+    # trusted") e o lote inteiro se perde — 85 lotes seguidos em 2026-09-12. A própria mensagem do CLI manda
+    # pré-gravar a chave aqui. Fica gravável pelo grupo: o claude reescreve esse arquivo no start.
+    (ws / ".cc/.claude.json").write_text(json.dumps({"projects": {str(ws): {"hasTrustDialogAccepted": True}}}, indent=1))
 
-    os.chmod(ws, 0o700)
-    ids = _app_claude_ids()
-    if ids is not None:
-        uid, gid = ids
-        try:
-            os.chown(ws, uid, gid)
-        except PermissionError:
-            pass
+    # O claude roda como app-claude (uid distinto). O orquestrador (app) NÃO tem CAP_CHOWN: `os.chown` p/ outro
+    # uid falhava calado e o ws ficava 700 do app → claude não lia nada e destilava "fonte inacessível"
+    # (bug 2026-09-11, todos os lotes após o sandbox de uid). Fix: app é membro do grupo app-claude (Dockerfile),
+    # entrega o ws pelo GRUPO (chgrp não precisa de capability) com modos 750/640; .cc/.home 2770 (claude escreve
+    # config/sessão; setgid + umask 007 no filho → o que ele criar fica do grupo e gravável → app limpa depois).
+    pw = _app_claude_pw()
+    if pw is None:                                   # Mac/testes: sem sandbox de uid, ws só do dono
+        os.chmod(ws, 0o700)
+        return ws
+    gid = pw.pw_gid
+    try:
         for root, dirs, files in os.walk(ws):
-            for name in dirs + files:
-                try:
-                    os.chown(os.path.join(root, name), uid, gid)
-                except PermissionError:
-                    pass
+            for name in dirs:
+                d = os.path.join(root, name); os.chown(d, -1, gid)
+                os.chmod(d, 0o2770 if d in (str(ws / ".cc"), str(ws / ".home")) else 0o750)
+            for name in files:
+                f = os.path.join(root, name); os.chown(f, -1, gid)
+                priv = root.startswith(str(ws / ".cc")) or root.startswith(str(ws / ".home"))
+                os.chmod(f, 0o660 if priv else 0o640)      # o claude reescreve o que está em .cc/.home
+        os.chown(ws, -1, gid); os.chmod(ws, 0o750)
+    except PermissionError as e:
+        raise RuntimeError(f"workspace não pôde ser entregue ao grupo app-claude (app é membro do grupo?): {e}") from e
     return ws
 
 

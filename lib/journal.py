@@ -95,6 +95,20 @@ class Journal:
         rows = self.con.execute("SELECT started FROM runs WHERE kind=? AND status NOT IN ('running', 'aborted', 'empty')", (kind,)).fetchall()
         return sum(1 for r in rows if datetime.fromisoformat(r["started"]).astimezone(ZoneInfo(tz)).strftime("%Y-%m-%d") == day)
 
+    def consecutive_invalid(self, kind: str, since: str | None = None) -> int:
+        """Quantos lotes seguidos (do mais recente para trás) morreram sem produzir saída válida.
+        Alimenta a trava de `should_run`: falha de infra repete igual e não adianta insistir.
+        `since` (ISO) limita a contagem aos lotes iniciados depois dali — o boot do processo zera a
+        trava, porque reiniciar é a intervenção do operador que a destrava (bug 2026-09-12)."""
+        n = 0
+        rows = self.con.execute("SELECT status FROM runs WHERE kind=? AND status!='running' AND started>=? ORDER BY rowid DESC",
+                                (kind, since or ""))
+        for r in rows:
+            if r["status"] != "distill_invalid":
+                break
+            n += 1
+        return n
+
     def add_groq_seconds(self, seconds: int) -> None:
         self.con.execute("INSERT INTO groq(ts,seconds) VALUES(?,?)", (_now(), int(seconds)))
 

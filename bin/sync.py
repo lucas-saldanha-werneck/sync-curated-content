@@ -7,13 +7,13 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lib.config import load_config
-from lib.journal import Journal
+from lib.journal import Journal, _now as journal_now
 from lib.raindrop import RaindropClient
 from lib.dropbox_store import DropboxStore, RcloneTokenProvider, EnvTokenProvider
 from lib.records import Records
 from lib.queue import pending, needs_capture, needs_distill, is_nowiki
 from lib.capture import Deps as CapDeps, capture_one
-from lib.batch import BatchDeps, run_batch, should_run
+from lib.batch import BatchDeps, breaker_since, run_batch, should_run
 from lib.snapshot import Snapshot, UndoRepo
 from lib.health import run_checks, write_health_files, ping_uptimerobot, status_md, claude_auth_probe
 from lib.undo import undo_run
@@ -34,6 +34,7 @@ class App:
         self.cfg, self.env = cfg, env
         self.work = Path(cfg.work_dir); self.work.mkdir(parents=True, exist_ok=True)
         self.journal = Journal(self.work / "journal.db")
+        self.boot = journal_now()          # trava de lotes inválidos só conta o que aconteceu depois do boot
         self.raindrop = make_raindrop(cfg); self.store = make_store(cfg, env); self.records = Records(self.store, cfg)
         secrets = {"groq": cfg.groq_api_key, "apify": cfg.apify_token, "jina": cfg.jina_api_key, "firecrawl": cfg.firecrawl_api_key}
         self.cap = CapDeps(cfg=cfg, raindrop=self.raindrop, store=self.store, records=self.records, journal=self.journal, fetch_fn=make_fetch_fn(), secrets=secrets)
@@ -63,7 +64,8 @@ class App:
         ready = [iid for iid, k in recs.items() if needs_distill(k)]
         if ready and self.first_pending is None: self.first_pending = self.now()
         if not ready: self.first_pending = None
-        while ready and not STOP["flag"] and should_run(ready, self.first_pending, self.now(), cfg, self.journal.runs_today("distill", cfg.tz)):
+        while ready and not STOP["flag"] and should_run(ready, self.first_pending, self.now(), cfg, self.journal.runs_today("distill", cfg.tz),
+                                                            self.journal.consecutive_invalid("distill", breaker_since(self.boot, self.now()))):
             batch = sorted(ready)[: cfg.batch_max_items]
             try:
                 res = run_batch(batch, self.bat, self.work / "distill"); out["batches"] += 1

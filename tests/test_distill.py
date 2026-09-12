@@ -65,3 +65,55 @@ def test_run_claude_raises_on_nonzero_rc(tmp_path):
 def test_render_prompt_substitutes():
     p = render_prompt("X {{PAGES}} Y {{TRIGGERS}} Z {{TYPES}} W {{ITEMS}}", [{"raindrop_id": 1, "raw": "raw/curated/a.md", "note": "n"}], ["wiki/a.md"], ["solar"], ["skill"])
     assert "wiki/a.md" in p and "solar" in p and "skill" in p and '"raindrop_id": 1' in p
+
+
+def test_build_workspace_readable_by_app_claude_group(tmp_path, monkeypatch):
+    """Bug 2026-09-11: chown p/ app-claude falhava calado (app sem CAP_CHOWN) e o ws ficava 700 do app →
+    claude (uid app-claude) não lia nada e destilava "fonte inacessível". Fix: grupo app-claude + modos."""
+    import os, stat
+    from lib import distill
+    gid = os.getgid()
+    monkeypatch.setattr(distill, "_app_claude_pw", lambda: type("PW", (), {"pw_uid": 99999, "pw_gid": gid})())
+    snap = Snap({"wiki/a.md": (b"# A\n", "r1"), "CLAUDE.md": (b"regras", "r0")})
+    ws = build_workspace(tmp_path / "ws3", snap, {"raw/curated/x-r1.md": b"texto"}, {"raw/curated/x-r1": [("01.jpg", b"jpg")]})
+    assert ws.stat().st_gid == gid and (ws / "raw/curated/x-r1.md").stat().st_gid == gid
+    assert (ws / "raw/curated/x-r1/frames/01.jpg").stat().st_gid == gid
+    assert ws.stat().st_mode & 0o777 == 0o750                       # grupo entra, outros não
+    assert (ws / "raw/curated").stat().st_mode & 0o777 == 0o750
+    assert (ws / "raw/curated/x-r1.md").stat().st_mode & 0o777 == 0o640
+    assert (ws / ".claude/settings.json").stat().st_mode & 0o777 == 0o640
+    for d in (".cc", ".home"):                                       # claude escreve config/sessão aqui
+        assert (ws / d).stat().st_mode & 0o777 == 0o770
+        assert (ws / d).stat().st_mode & stat.S_ISGID                # filhos herdam o grupo → app limpa depois
+
+
+def test_build_workspace_chgrp_failure_is_loud(tmp_path, monkeypatch):
+    import os
+    from lib import distill
+    monkeypatch.setattr(distill, "_app_claude_pw", lambda: type("PW", (), {"pw_uid": 99999, "pw_gid": 99999})())
+    monkeypatch.setattr(os, "chown", lambda *a, **k: (_ for _ in ()).throw(PermissionError("no")))
+    snap = Snap({"CLAUDE.md": (b"regras", "r0")})
+    import pytest
+    with pytest.raises(RuntimeError, match="app-claude"):
+        build_workspace(tmp_path / "ws4", snap, {}, {})
+
+
+def test_preexec_sets_group_friendly_umask():
+    import os
+    from lib.distill import _preexec_as_app_claude
+    old = os.umask(0o022)
+    try:
+        _preexec_as_app_claude()()          # app-claude não existe no Mac → drop_to é no-op
+        assert os.umask(0o022) == 0o007
+    finally:
+        os.umask(old)
+
+
+def test_build_workspace_pretrusts_the_workspace(tmp_path):
+    """Bug 2026-09-12: o claude passou a ABORTAR (rc=1) em workspace não confiado — 85 lotes seguidos perdidos.
+    A própria mensagem do CLI manda pré-gravar hasTrustDialogAccepted no CLAUDE_CONFIG_DIR."""
+    snap = Snap({"CLAUDE.md": (b"regras", "r0")})
+    ws = build_workspace(tmp_path / "ws5", snap, {}, {})
+    cfgj = json.loads((ws / ".cc/.claude.json").read_text())
+    assert cfgj["projects"][str(ws)]["hasTrustDialogAccepted"] is True
+    assert (ws / ".cc/.claude.json").stat().st_mode & 0o200            # o claude reescreve esse arquivo

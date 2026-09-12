@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import traceback
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from lib.applier import LimitError, apply, plan_ops
@@ -23,11 +23,29 @@ class BatchDeps:
     now: object = datetime.now
 
 
-def should_run(pending: list, first_pending_ts, now: datetime, cfg, runs_today: int) -> bool:
+BREAKER_COOLDOWN_MIN = 30  # a trava desliza: falha transitória (cota 429, rede) volta sozinha, sem restart
+BREAKER_INVALID = 3        # lotes distill_invalid seguidos (nenhum item progride) que travam a destilação
+NIGHT_WINDOW_FACTOR = 2    # a janela das 3h drena o backlog (DESIGN §79), mas com teto próprio
+
+
+def breaker_since(boot: str, now: datetime) -> str:
+    """Início da janela que a trava enxerga: o boot do processo (restart = intervenção do operador)
+    ou os últimos BREAKER_COOLDOWN_MIN minutos, o que for mais recente. Sem isso uma falha transitória
+    deixaria a destilação parada até alguém reiniciar o container (bug 2026-09-12, cota 429)."""
+    desliza = (now - timedelta(minutes=BREAKER_COOLDOWN_MIN)).isoformat(timespec="seconds")
+    return max(boot, desliza)
+
+
+def should_run(pending: list, first_pending_ts, now: datetime, cfg, runs_today: int, consecutive_invalid: int = 0) -> bool:
     if not pending:
         return False
+    # trava: lote que morre antes de produzir saída válida (claude rc!=0, workspace sem trust, token vencido)
+    # repetia para sempre — na janela das 3h, sem teto nenhum (85 chamadas queimadas em 2026-09-12)
+    if consecutive_invalid >= BREAKER_INVALID:
+        return False
     local = now.astimezone(ZoneInfo(cfg.tz)) if now.tzinfo else now
-    if runs_today >= cfg.max_batches_per_day and not (local.hour == 3):
+    cap = cfg.max_batches_per_day * (NIGHT_WINDOW_FACTOR if local.hour == 3 else 1)
+    if runs_today >= cap:
         return False
     if len(pending) >= cfg.batch_min_items:
         return True
