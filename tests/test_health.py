@@ -62,3 +62,11 @@ def test_loop_vivo_uses_heartbeat_not_only_the_poll(tmp_path):
     parado = run_checks(j, {}, Config(), now, now - timedelta(minutes=40), 60.0, now - timedelta(hours=1), tmp_path,
                         heartbeat_ts=now - timedelta(minutes=40))
     assert not parado.checks["loop_vivo"][0]
+
+
+def test_status_conta_item_esperando_recaptura_como_pendente(tmp_path):
+    j, now = base(tmp_path)
+    recs = {1: {"meta", "captured", "distill", "parcial", "recap1"}}
+    h = run_checks(j, recs, Config(), now, now, 60.0, now, tmp_path, heartbeat_ts=now)
+    md = status_md(j, recs, Config(), h, 0)
+    assert "| pendente | 1 |" in md and "| captured |" not in md

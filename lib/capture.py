@@ -11,6 +11,7 @@ from lib.fetch_types import FetchResult
 from lib.fetcher import fetch, route
 from lib.queue import is_nowiki, retry_number
 from lib.rawwriter import raw_relpath, frames_reldir, render_raw
+from lib.records import generation, gen_kind, has_capture
 
 
 @dataclass
@@ -40,7 +41,7 @@ def capture_one(item: dict, deps: Deps, work: Path) -> str:
     if "meta" not in kinds:
         deps.records.write(iid, "meta", {"link": item["link"], "title": item.get("title"), "created": item.get("created"),
                                          "type": item.get("type"), "tags": item.get("tags"), "raindrop": item.get("raw")})
-    if "captured" in kinds:
+    if has_capture(kinds):
         deps.journal.upsert_item(iid, state="captured", retries=0); return "captured"   # zera p/ a destilação (Codex #2)
     plat = route(item["link"], item.get("type", "link"))
     fr: FetchResult = deps.fetch_fn(item, Path(work) / f"r{iid}", cfg, deps.secrets, deps.journal)
@@ -49,7 +50,7 @@ def capture_one(item: dict, deps: Deps, work: Path) -> str:
         deps.records.write(iid, f"retry{retries + 1}", {"error": fr.error, "platform": plat})
         deps.journal.upsert_item(iid, state="retry", retries=retries + 1, last_error=fr.error)
         _tag(deps, iid, ["sr:retry"], []); return "retry"
-    raw_rel = raw_relpath(item, plat, cfg.tz)
+    raw_rel = raw_relpath(item, plat, cfg.tz, generation(kinds))   # recaptura grava arquivo próprio, não sobrescreve
     frame_names = [n for n, _ in fr.frames][: cfg.frames_max]
     md = render_raw(item, fr, plat, raw_rel, frame_names).encode("utf-8")
     try:
@@ -62,7 +63,7 @@ def capture_one(item: dict, deps: Deps, work: Path) -> str:
     for name, blob in fr.frames[: cfg.frames_max]:
         try: deps.store.add(cfg.vault_path(f"{frames_reldir(raw_rel)}/{name}"), blob)
         except ConflictError: pass
-    deps.records.write(iid, "captured", {"raw": raw_rel, "frames": frame_names, "method": fr.method, "platform": plat,
+    deps.records.write(iid, gen_kind("captured", kinds), {"raw": raw_rel, "frames": frame_names, "method": fr.method, "platform": plat,
                                          "error": fr.error, "duration_s": fr.duration_s})
     deps.journal.upsert_item(iid, state="captured", retries=0, raw_path=raw_rel, link=item["link"], title=item.get("title"), created=item.get("created"))  # retries=0: destilação tem orçamento próprio (Codex #2)
     _tag(deps, iid, ["sr:raw"], ["sr:retry"])

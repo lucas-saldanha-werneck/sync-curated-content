@@ -88,6 +88,7 @@ class App:
             if res.get("status") in ("distill_invalid", "distill_conflict"): break
         for req in self.journal.pop_requests():
             if req["cmd"] == "retry": self.retry(int(req["arg"]))
+            elif req["cmd"] == "recapture": self.recapture(int(req["arg"]))
             elif req["cmd"] == "undo": undo_run(req["arg"], self.store, self.journal, cfg)
         self.health(recs)
         return out
@@ -141,6 +142,13 @@ class App:
         except Exception as e:
             self.journal.upsert_item(0, last_error=f"catalog-index.jsonl: {e}")
 
+    def recapture(self, iid: int):
+        """Refaz a CAPTURA do item (raw novo) e depois a destilação. Para raw que nasceu vazio
+        porque a origem bloqueou na hora — re-destilar o mesmo arquivo não muda nada."""
+        self.records.refresh(); kind = self.records.request_recapture(iid)
+        self.journal.upsert_item(iid, retries=0, last_error=None, state="captured")
+        print(f"recapture r{iid}: {kind or 'já estava reaberto'}", flush=True)
+
     def retry(self, iid: int):
         # item já destilado (ex.: depois de um undo): registros são imutáveis → abre geração nova (redoN) para re-destilar
         self.records.refresh(); redo = self.records.request_redo(iid)
@@ -177,7 +185,7 @@ class App:
 
 def main(argv=None, env=None) -> int:
     env = dict(os.environ if env is None else env)
-    ap = argparse.ArgumentParser(); ap.add_argument("cmd", choices=["run", "once", "now", "status", "retry", "backfill", "undo"])
+    ap = argparse.ArgumentParser(); ap.add_argument("cmd", choices=["run", "once", "now", "status", "retry", "recapture", "backfill", "undo"])
     ap.add_argument("arg", nargs="?"); ap.add_argument("--config", default=str(SKILL / "config.json"))
     ap.add_argument("--all", action="store_true"); ap.add_argument("--since"); ap.add_argument("--dry-run", action="store_true"); ap.add_argument("--continue", dest="cont", action="store_true")
     a = ap.parse_args(argv)
@@ -187,6 +195,7 @@ def main(argv=None, env=None) -> int:
     if a.cmd == "now": app.journal.enqueue_request("now", None); print("pedido enfileirado"); return 0
     if a.cmd == "status": print((app.work / "status.md").read_text() if (app.work / "status.md").exists() else "sem status ainda"); return 0
     if a.cmd == "retry": app.journal.enqueue_request("retry", a.arg); print("retry enfileirado"); return 0
+    if a.cmd == "recapture": app.journal.enqueue_request("recapture", a.arg); print("recaptura enfileirada"); return 0
     if a.cmd == "undo": print(json.dumps(undo_run(a.arg, app.store, app.journal, cfg), ensure_ascii=False)); return 0
     if a.cmd == "backfill": return app.backfill(None if a.all else a.since, a.dry_run, a.cont)
     return 1

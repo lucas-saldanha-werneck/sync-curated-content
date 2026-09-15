@@ -16,9 +16,12 @@ def slugify(title: str, fallback: str, max_len: int = 60) -> str:
     s = s[:max_len].rstrip("-")
     return s or fallback
 
-def raw_relpath(item: dict, platform: str, tz: str) -> str:
+def raw_relpath(item: dict, platform: str, tz: str, generation: int = 0) -> str:
+    """Caminho do raw. Raw é imutável: a recaptura (geração > 0) grava um arquivo PRÓPRIO
+    em vez de sobrescrever o antigo, que fica como histórico do que a origem entregou."""
     created = datetime.fromisoformat(item["created"].replace("Z", "+00:00")).astimezone(ZoneInfo(tz))
-    return f"raw/curated/{created:%Y-%m-%d}_{platform}-{slugify(item.get('title') or '', 'sem-titulo')}-r{item['id']}.md"
+    base = f"raw/curated/{created:%Y-%m-%d}_{platform}-{slugify(item.get('title') or '', 'sem-titulo')}-r{item['id']}"
+    return f"{base}.md" if generation == 0 else f"{base}.g{generation}.md"
 
 def frames_reldir(raw_rel: str) -> str:
     return raw_rel[:-3] + "/frames"

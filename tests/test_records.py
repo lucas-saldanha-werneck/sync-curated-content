@@ -53,3 +53,65 @@ def test_request_redo_reopens_erro_item_without_distill():
     assert r.request_redo(9) == "redo1"; r.refresh(); assert needs_capture({"id": 9}, r.kinds(9))
     r.write(10, "meta", {}); r.write(10, "retry1", {}); r.refresh()
     assert r.request_redo(10) is None                      # item só com retry de captura: retry comum (journal) basta
+
+
+# --- recaptura: gerações também valem para a CAPTURA (2026-09-12/14) --------------------
+# Motivo: 11 vídeos do YouTube foram capturados SEM legenda (bot-wall por IP de datacenter).
+# Depois o túnel residencial passou a funcionar, mas `retry` só re-destilava o raw velho e
+# vazio. Agora `recapture` abre uma geração que refaz a captura e grava um raw próprio.
+
+def test_generation_counts_recap_markers():
+    from lib.records import generation
+    assert generation({"captured", "parcial"}) == 0
+    assert generation({"captured", "parcial", "recap1"}) == 1
+    assert generation({"captured", "parcial", "redo1", "recap2"}) == 2
+
+
+def test_gen_kind_applies_to_captured():
+    from lib.records import gen_kind
+    assert gen_kind("captured", {"captured", "parcial"}) == "captured"
+    assert gen_kind("captured", {"captured", "parcial", "recap1"}) == "captured1"
+
+
+def test_needs_recapture_only_when_the_generation_asked_for_it():
+    from lib.records import needs_recapture
+    assert not needs_recapture({"captured", "parcial"})
+    assert not needs_recapture({"captured", "parcial", "redo1"})      # redo = só re-destilar
+    assert needs_recapture({"captured", "parcial", "recap1"})
+    assert not needs_recapture({"captured", "parcial", "recap1", "captured1", "distill1"})
+
+
+def test_has_capture_respects_the_generation():
+    from lib.records import has_capture
+    assert not has_capture({"meta"})
+    assert has_capture({"meta", "captured"})
+    assert has_capture({"meta", "captured", "redo1"})                  # redo reaproveita o raw antigo
+    assert not has_capture({"meta", "captured", "recap1"})             # recap exige captura nova
+    assert has_capture({"meta", "captured", "recap1", "captured1"})
+
+
+def test_request_recapture_opens_a_generation():
+    from lib.records import gen_kind, needs_recapture, has_capture
+    store = make_store(); cfg = Config(); r = Records(store, cfg)
+    r.write(8, "meta", {}); r.write(8, "captured", {"raw": "raw/curated/x.md", "method": "none"})
+    r.write(8, "distill", {"decision": "parcial", "catalog": {"name": "v0"}, "date": "2026-09-12", "raw": "raw/curated/x.md"})
+    r.write(8, "parcial", {}); r.refresh()
+    assert r.request_recapture(8) == "recap1"; r.refresh()
+    k = r.kinds(8)
+    assert terminal_state(k) is None and needs_recapture(k) and not has_capture(k)
+    assert gen_kind("captured", k) == "captured1"
+    r.write(8, "captured1", {"raw": "raw/curated/x.g1.md", "method": "apify-captions"}); r.refresh()
+    k = r.kinds(8)
+    assert has_capture(k) and not needs_recapture(k)
+    assert r.request_recapture(8) is None            # já reaberto: não empilha recap2 sem nova destilação
+
+
+def test_capture_kind_picks_the_raw_that_vale_para_a_geracao():
+    """redo reaproveita o raw da geração anterior; recaptura usa o próprio."""
+    from lib.records import capture_kind
+    assert capture_kind({"meta"}) is None
+    assert capture_kind({"meta", "captured"}) == "captured"
+    assert capture_kind({"meta", "captured", "redo1"}) == "captured"          # redo: raw velho serve
+    assert capture_kind({"meta", "captured", "recap1"}) == "captured"         # ainda não recapturou
+    assert capture_kind({"meta", "captured", "recap1", "captured1"}) == "captured1"
+    assert capture_kind({"meta", "captured", "recap1", "captured1", "redo2"}) == "captured1"

@@ -10,7 +10,7 @@ from lib.applier import LimitError, apply, plan_ops
 from lib.distill import DistillError, build_workspace, render_prompt, run_claude as _run_claude
 from lib.dropbox_store import ConflictError
 from lib.queue import is_nowiki
-from lib.records import gen_kind
+from lib.records import capture_kind, gen_kind
 from lib.snapshot import Snap
 
 
@@ -91,7 +91,9 @@ def _run_batch(item_ids: list[int], deps: BatchDeps, work: Path, run_id: str) ->
         fresh = deps.raindrop.get(iid)
         if fresh and is_nowiki(fresh):
             deps.records.write(iid, "nowiki", {}); res["items"][iid] = "nowiki"; _tag(deps, iid, [], ["sr:raw"]); continue
-        cap = deps.records.read(iid, "captured"); meta = deps.records.read(iid, "meta") or {}
+        # geração atual: depois de uma recaptura o raw bom é o `capturedN`, não o de geração 0
+        ck = capture_kind(deps.records.kinds(iid))
+        cap = deps.records.read(iid, ck) if ck else None; meta = deps.records.read(iid, "meta") or {}
         if not cap:
             res["items"][iid] = "sem_captured"; continue
         items[iid] = {"raindrop_id": iid, "raw": cap["raw"], "frames": cap.get("frames", []), "link": meta.get("link"), "title": meta.get("title"),

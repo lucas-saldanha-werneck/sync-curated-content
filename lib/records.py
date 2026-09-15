@@ -10,11 +10,13 @@ NAME_RE = re.compile(r"/r(\d+)\.([a-z0-9]+)\.json$")
 # Gerações: registros são imutáveis, então "re-destilar" (undo + retry) abre uma geração nova: `redoN` reabre o item e,
 # a partir daí, os kinds de destilação/decisão da geração N chamam-se distillN / wikiN / parcialN / skipN / erroN.
 # `nowiki` (opt-out do usuário) não tem geração. Geração 0 = nomes sem sufixo (compatível com o histórico).
-GEN_KINDS = ("distill", "wiki", "parcial", "skip", "erro")
-GEN_RE = re.compile(r"^(distill|wiki|parcial|skip|erro|redo)(\d+)$")
+GEN_KINDS = ("captured", "distill", "wiki", "parcial", "skip", "erro")
+GEN_RE = re.compile(r"^(captured|distill|wiki|parcial|skip|erro|redo|recap)(\d+)$")
 
 def generation(kinds: set[str]) -> int:
-    return sum(1 for k in kinds if k.startswith("redo") and k[4:].isdigit())
+    """Gerações são abertas por `redoN` (só re-destilar) ou `recapN` (refazer captura E destilação)."""
+    return sum(1 for k in kinds
+               if (k.startswith("redo") and k[4:].isdigit()) or (k.startswith("recap") and k[5:].isdigit()))
 
 def gen_kind(kind: str, kinds: set[str]) -> str:
     """Nome do kind `kind` na geração atual do item (ex.: "distill" → "distill2" após 2 redos)."""
@@ -23,6 +25,30 @@ def gen_kind(kind: str, kinds: set[str]) -> str:
 
 def has_distill(kinds: set[str]) -> bool:
     return gen_kind("distill", kinds) in kinds
+
+
+def needs_recapture(kinds: set[str]) -> bool:
+    """A geração atual foi aberta por `recapN` e ainda não tem captura própria."""
+    g = generation(kinds)
+    return g > 0 and f"recap{g}" in kinds and gen_kind("captured", kinds) not in kinds
+
+
+def capture_kind(kinds: set[str]) -> str | None:
+    """Nome do registro de captura que vale para a geração atual: o da própria geração quando
+    existe (recaptura), senão o mais recente anterior — um `redo` reaproveita o raw que já havia."""
+    for n in range(generation(kinds), -1, -1):
+        k = "captured" if n == 0 else f"captured{n}"
+        if k in kinds:
+            return k
+    return None
+
+
+def has_capture(kinds: set[str]) -> bool:
+    """Existe raw utilizável para destilar. Numa geração de recaptura só vale a captura DELA;
+    numa geração de redo o raw da geração anterior serve (o problema era a destilação)."""
+    if needs_recapture(kinds):
+        return False
+    return capture_kind(kinds) is not None
 
 def terminal_state(kinds: set[str]) -> str | None:
     if gen_kind("wiki", kinds) in kinds:    # wiki é sucesso: prioridade máxima
@@ -94,4 +120,15 @@ class Records:
             return None                     # ainda na fila (retry comum basta) ou opt-out do usuário (irreversível por aqui)
         kind = f"redo{generation(kinds) + 1}"
         self.write(item_id, kind, {"prev": gen_kind("distill", kinds), "reason": "retry após destilação (undo/retry)"})
+        return kind
+
+    def request_recapture(self, item_id: int) -> str | None:
+        """`recapture`: reabre o item e manda refazer a CAPTURA (raw novo), não só a destilação.
+        Para raw que nasceu vazio por bloqueio na origem — re-destilar o mesmo arquivo não adianta.
+        Devolve o kind gravado, ou None se o item já está reaberto/na fila."""
+        kinds = self.kinds(item_id)
+        if not has_distill(kinds) and terminal_state(kinds) in (None, "nowiki"):
+            return None
+        kind = f"recap{generation(kinds) + 1}"
+        self.write(item_id, kind, {"prev": gen_kind("captured", kinds), "reason": "recaptura: raw sem conteúdo utilizável"})
         return kind

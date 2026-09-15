@@ -31,3 +31,13 @@ def test_empty_frames_list():
     fr = FetchResult(platform="youtube", text="test", method="captions", title="T", author="A", duration_s=120)
     md = render_raw(ITEM, fr, "youtube", "raw/curated/x-r77.md", [])
     assert "frames: []" in md
+
+
+def test_raw_relpath_separa_o_arquivo_por_geracao():
+    """Raw é imutável: a recaptura NÃO sobrescreve o antigo, grava um arquivo da geração nova."""
+    from lib.rawwriter import raw_relpath
+    it = {"id": 42, "title": "Como afinar piano", "created": "2026-05-06T14:25:41Z"}
+    base = raw_relpath(it, "youtube", "America/Sao_Paulo")
+    assert base.endswith("-r42.md")
+    g1 = raw_relpath(it, "youtube", "America/Sao_Paulo", generation=1)
+    assert g1 == base[:-3] + ".g1.md" and g1 != base

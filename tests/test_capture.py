@@ -91,3 +91,27 @@ def test_capture_success_resets_retry_counter_for_distill_phase(tmp_path):
     d.journal.upsert_item(ITEM["id"], state="retry", retries=2)                 # 2 retries de captura já gastos
     assert capture_one(ITEM, d, tmp_path) == "captured"
     assert (d.journal.get_item(ITEM["id"]) or {}).get("retries") == 0           # captura OK zera para a destilação
+
+
+def test_recapture_writes_a_new_raw_and_keeps_the_old_one(tmp_path):
+    """O caso real: vídeo capturado sem legenda (bot-wall). Depois a rede melhorou.
+    `recapture` tem que buscar de novo, gravar raw da geração nova e NÃO tocar no antigo."""
+    d, store = deps(tmp_path, FetchResult(platform="youtube", method="none", error="bot-wall"))
+    for _ in range(4):
+        d.records.refresh(); capture_one(ITEM, d, tmp_path)
+    d.records.refresh()
+    velho = [p for p in store._client.files if p.endswith("-r5.md")][0]
+    assert 'transcript_method: "none"' in store._client.files[velho][0].decode()
+
+    d.records.write(5, "distill", {"decision": "parcial", "raw": velho, "date": "2026-09-12"})
+    d.records.write(5, "parcial", {}); d.records.refresh()
+    assert d.records.request_recapture(5) == "recap1"; d.records.refresh()
+    d.fetch_fn = lambda it, work, cfg, secrets, journal: FetchResult(platform="youtube", text="a legenda inteira", method="captions")
+    assert capture_one(ITEM, d, tmp_path) == "captured"
+    d.records.refresh()
+
+    assert any(p.endswith("r5.captured1.json") for p in store._client.files)      # registro da geração nova
+    novo = [p for p in store._client.files if p.endswith("-r5.g1.md")]
+    assert len(novo) == 1
+    assert "a legenda inteira" in store._client.files[novo[0]][0].decode()
+    assert 'transcript_method: "none"' in store._client.files[velho][0].decode()  # o antigo fica intacto

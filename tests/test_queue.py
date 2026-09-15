@@ -29,3 +29,20 @@ def test_needs_distill_after_redo():
     assert not needs_distill({"meta", "captured", "distill", "wiki"})
     assert needs_distill({"meta", "captured", "distill", "wiki", "redo1"})
     assert not needs_distill({"meta", "captured", "distill", "wiki", "redo1", "distill1", "parcial1"})
+
+
+def test_recapture_generation_sends_the_item_back_to_the_capture(monkeypatch):
+    """`retry` só re-destila. Para trocar um raw capturado sem legenda (bot-wall) o item
+    precisa VOLTAR para a captura — é o que a geração `recapN` faz (2026-09-14)."""
+    from lib.queue import needs_capture, needs_distill
+    it = {"id": 1, "tags": []}
+    parcial = {"meta", "captured", "distill", "parcial"}
+    assert not needs_capture(it, parcial) and not needs_distill(parcial)      # terminal: fora da fila
+    redo = parcial | {"redo1"}
+    assert not needs_capture(it, redo) and needs_distill(redo)                # redo: só re-destila
+    recap = parcial | {"recap1"}
+    assert needs_capture(it, recap) and not needs_distill(recap)              # recap: captura primeiro
+    depois = recap | {"captured1"}
+    assert not needs_capture(it, depois) and needs_distill(depois)            # capturou: agora destila
+    pronto = depois | {"distill1", "wiki1"}
+    assert not needs_capture(it, pronto) and not needs_distill(pronto)

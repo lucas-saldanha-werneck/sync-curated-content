@@ -4,7 +4,7 @@ import json, os, subprocess, urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from lib.records import terminal_state
+from lib.records import terminal_state, has_capture
 from lib.distill import _preexec_as_app_claude
 
 @dataclass
@@ -54,7 +54,7 @@ def ping_uptimerobot(url, h: Health, opener=urllib.request.urlopen) -> bool:
 def status_md(journal, records_map, cfg, h: Health, groq_used: int) -> str:
     counts = {}
     for k, v in records_map.items():
-        st = terminal_state(v) or ("captured" if "captured" in v else "pendente"); counts[st] = counts.get(st, 0) + 1
+        st = terminal_state(v) or ("captured" if has_capture(v) else "pendente"); counts[st] = counts.get(st, 0) + 1
     lines = [f"# sync-raindrop — status {h.ts}", "", f"Saúde: {'OK' if h.ok else 'DEGRADADO'}", ""]
     lines += ["| estado | itens |", "|---|---|"] + [f"| {k} | {v} |" for k, v in sorted(counts.items())]
     lines += ["", f"Lotes hoje: {journal.runs_today('distill', cfg.tz)} / {cfg.max_batches_per_day}", f"Groq hoje: {groq_used} s / {cfg.groq_daily_seconds} s", ""]

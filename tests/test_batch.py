@@ -199,3 +199,22 @@ def test_breaker_since_slides_so_the_trava_destrava_sozinha():
     bem_depois = datetime.fromisoformat("2026-09-12T09:00:00-03:00")
     esperado = (bem_depois - timedelta(minutes=BREAKER_COOLDOWN_MIN)).isoformat(timespec="seconds")
     assert breaker_since(boot, bem_depois) == esperado                 # depois, a janela deslizante manda
+
+
+def test_batch_reads_the_capture_of_the_current_generation(tmp_path):
+    """Depois de `recapture` o raw bom é o da geração nova. Ler o registro `captured` de
+    geração 0 destilaria o arquivo velho e vazio de novo (2026-09-14)."""
+    deps, store, rd = make_deps(tmp_path)
+    cfg = deps.cfg
+    novo_rel = "raw/curated/2026-09-10_youtube-fonte-a-r1.g1.md"
+    store.add(cfg.vault_path(novo_rel), b"---\nraindrop_id: 1\n---\n# Fonte A\na legenda inteira")
+    deps.records.write(1, "distill", {"decision": "parcial", "raw": "raw/curated/2026-09-10_youtube-fonte-a-r1.md", "date": "2026-09-12"})
+    deps.records.write(1, "parcial", {}); deps.records.refresh()
+    assert deps.records.request_recapture(1) == "recap1"
+    deps.records.write(1, "captured1", {"raw": novo_rel, "frames": [], "method": "captions", "platform": "youtube"})
+    deps.records.refresh()
+
+    visto = {}
+    deps.run_claude = lambda ws, c, tok, prompt, schema, **k: (visto.update(prompt=prompt), OUT)[1]
+    run_batch([1], deps, tmp_path / "ws")
+    assert novo_rel in visto["prompt"] and "-r1.md" not in visto["prompt"].replace(novo_rel, "")
