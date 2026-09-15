@@ -122,3 +122,29 @@ def test_isolate_false_never_raises(tmp_path):
     item = {"id": 1, "link": "https://blog.com/a", "type": "article", "title": "", "tags": []}
     r = fetch(item, tmp_path, Config(), {}, journal=None, fns=fns, isolate=False)
     assert r.method == "none" and "boom" in r.error
+
+
+def test_fetch_entrega_o_work_dir_ao_app_fetch_pelo_grupo(tmp_path, monkeypatch):
+    """O yt-dlp baixa legenda/vídeo PARA DISCO rodando como app-fetch, mas quem cria a pasta
+    é o orquestrador (app). Sem entregar a pasta, o download morre em 'Permission denied'
+    e o item vira `parcial` sem transcrição (bug achado 2026-09-14)."""
+    import os, stat
+    from lib import fetcher
+    gid = os.getgid()
+    monkeypatch.setattr(fetcher, "_app_fetch_pw", lambda: type("PW", (), {"pw_uid": 99999, "pw_gid": gid})())
+    work = tmp_path / "r1"
+    fetch({"id": 1, "link": "https://blog.com/x", "type": "article"}, work, Config(), {}, None,
+          fns={"article": lambda *a, **k: FetchResult(platform="article", text="t", method="trafilatura")}, isolate=False)
+    st = work.stat()
+    assert st.st_gid == gid
+    assert st.st_mode & 0o777 == 0o770 and st.st_mode & stat.S_ISGID
+
+
+def test_fetch_work_dir_sem_app_fetch_fica_privado(tmp_path, monkeypatch):
+    """Mac/teste sem o usuário app-fetch: sem sandbox, a pasta fica só do dono."""
+    from lib import fetcher
+    monkeypatch.setattr(fetcher, "_app_fetch_pw", lambda: None)
+    work = tmp_path / "r2"
+    fetch({"id": 2, "link": "https://blog.com/y", "type": "article"}, work, Config(), {}, None,
+          fns={"article": lambda *a, **k: FetchResult(platform="article", text="t", method="trafilatura")}, isolate=False)
+    assert work.stat().st_mode & 0o777 == 0o700

@@ -14,10 +14,33 @@ def route(url: str, rtype: str) -> str:
     if u.split("?")[0].endswith(".pdf") or rtype == "document": return "pdf"
     return "article"
 
+def _app_fetch_pw():
+    try:
+        return pwd.getpwnam("app-fetch")
+    except KeyError:
+        return None
+
+
+def _hand_work_dir_to_app_fetch(work: Path) -> None:
+    """O fetcher (yt-dlp, ffmpeg) grava NA PASTA e roda como app-fetch, mas quem cria a pasta é o
+    orquestrador (app), que não tem CAP_CHOWN. Entrega pelo GRUPO (chgrp não precisa de capability):
+    2770 + setgid, para o que o filho criar continuar do grupo e o app conseguir limpar depois.
+    Sem isso o download morre em 'Permission denied' e o item vira parcial (bug 2026-09-14)."""
+    pw = _app_fetch_pw()
+    if pw is None:
+        os.chmod(work, 0o700)           # Mac/testes: sem sandbox de uid, pasta só do dono
+        return
+    try:
+        os.chown(work, -1, pw.pw_gid); os.chmod(work, 0o2770)
+    except PermissionError as e:
+        raise RuntimeError(f"work dir não pôde ser entregue ao grupo app-fetch (app é membro do grupo?): {e}") from e
+
+
 def _drop_privileges():
     # no Mac/testes app-fetch não existe → no-op; em produção qualquer falha levanta (review Opus M2)
     from lib.privs import drop_to
     drop_to("app-fetch")
+    os.umask(0o007)                     # o que o fetcher criar fica gravável pelo grupo → app limpa depois
 
 def _worker(q, fn, args, kwargs, env):
     try:
@@ -75,7 +98,7 @@ def fetch(item: dict, work: Path, cfg, secrets: dict, journal, fns: dict | None 
     f = {"video": fetch_video, "article": fetch_article, "pdf": fetch_pdf, "instagram": fetch_instagram,
          "linkedin": fetch_linkedin, "x": fetch_x, **(fns or {})}
     plat = route(item["link"], item.get("type", "link"))
-    work = Path(work); work.mkdir(parents=True, exist_ok=True)
+    work = Path(work); work.mkdir(parents=True, exist_ok=True); _hand_work_dir_to_app_fetch(work)
     env = {"PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"), "TZ": cfg.tz, "HOME": str(work)}
     if os.environ.get("YTDLP_PROXY"): env["YTDLP_PROXY"] = os.environ["YTDLP_PROXY"]
     if os.environ.get("YTDLP_POT_URL"): env["YTDLP_POT_URL"] = os.environ["YTDLP_POT_URL"]

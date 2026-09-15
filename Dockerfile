@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && groupadd -g 10002 app-fetch && useradd -u 10002 -g app-fetch -M -s /usr/sbin/nologin app-fetch \
     && groupadd -g 10003 app-claude && useradd -u 10003 -g app-claude -M -s /usr/sbin/nologin app-claude \
     # app entrega o workspace de destilação ao claude pelo GRUPO (chgrp sem capability; ver lib/distill.build_workspace)
-    && usermod -aG app-claude app
+    && usermod -aG app-claude,app-fetch app
 
 RUN pip install --no-cache-dir "yt-dlp[default]" dropbox trafilatura bgutil-ytdlp-pot-provider
 
