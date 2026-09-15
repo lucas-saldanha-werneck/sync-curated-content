@@ -9,6 +9,7 @@ REGRAS DURAS
 6. `decision`: "wiki" se há claims; "parcial" se a fonte veio sem conteúdo (só metadados) mas vale um registro no catálogo; "skip" se não tem sinal (promo, receita, teaser, duplicado). "Lacuna é melhor que ruído."
 7. `catalog.type` ∈ {{TYPES}}. `catalog.triggers`: 3 a 8 palavras ou bigramas, SOMENTE desta lista: {{TRIGGERS}}. `implement` = true só se a nota do Lucas pedir para implementar.
 8. Português brasileiro. Datas absolutas. Não invente números que não estejam na fonte.
+9. No texto do claim NÃO escreva links de arquivo. Nada de `[algo](../raw/curated/…)`, caminho relativo, `file:`, `curated:` ou colchete duplo para arquivo. O aplicador já liga o raw sozinho, no catálogo. URL só se for EXATAMENTE a URL da fonte, e começando com `https://`. Também não use `<`, `>`, `![`, nem cerca de código. Claim que quebrar isso é recusado e o item volta para a fila.
 
 PÁGINAS EXISTENTES (use exatamente estes caminhos): {{PAGES}}
 
