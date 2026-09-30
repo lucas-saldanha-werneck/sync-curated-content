@@ -17,7 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # app entrega o workspace de destilação ao claude pelo GRUPO (chgrp sem capability; ver lib/distill.build_workspace)
     && usermod -aG app-claude,app-fetch app
 
-RUN pip install --no-cache-dir "yt-dlp[default]" dropbox trafilatura bgutil-ytdlp-pot-provider
+# curl-cffi: o extrator do TikTok exige impersonation; sem ele todo vídeo dá "Unexpected response" (2026-09-30)
+RUN pip install --no-cache-dir "yt-dlp[default,curl-cffi]" dropbox trafilatura bgutil-ytdlp-pot-provider
 
 # PO-token provider para o bot-wall do YouTube (best-effort). Se o clone/build falhar,
 # a imagem segue sem ele; o entrypoint detecta a ausência e não define YTDLP_POT_URL.

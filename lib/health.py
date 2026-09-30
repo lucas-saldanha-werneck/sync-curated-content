@@ -11,8 +11,21 @@ from lib.distill import _preexec_as_app_claude
 class Health:
     ok: bool; checks: dict; ts: str
 
+ABORT_STREAK = 3     # lotes seguidos abortados por exceção = serviço parado com loop vivo (2026-09-30: wiki > MAX_FILES)
+
+def proxy_probe(proxy_url: str, open_with=None, url: str = "https://www.youtube.com/generate_204") -> tuple[bool, str]:
+    """Sai pelo proxy residencial (YTDLP_PROXY) e espera resposta. Pega túnel sem rota (regra do
+    wg-quick apagada por restart do networkd em 2026-09-29: proxy escutando, toda conexão em timeout)."""
+    if open_with is None:
+        open_with = lambda p: urllib.request.build_opener(urllib.request.ProxyHandler({"http": p, "https": p})).open
+    try:
+        with open_with(proxy_url)(urllib.request.Request(url, method="HEAD"), timeout=20) as r:
+            return True, f"ok ({r.status})"
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"[:200]
+
 def run_checks(journal, records_map, cfg, now, last_poll_ts, disk_free_pct, auth_ok_ts, work_dir,
-               heartbeat_ts=None) -> "Health":
+               heartbeat_ts=None, proxy=None) -> "Health":
     c = {}
     # "vivo" = o loop deu sinal, não necessariamente um poll novo: em backfill sustentado o ciclo passa
     # horas dentro dos lotes sem voltar a ler o Raindrop, e o monitor alarmava à toa (2026-09-12).
@@ -36,6 +49,14 @@ def run_checks(journal, records_map, cfg, now, last_poll_ts, disk_free_pct, auth
             if now - t <= timedelta(hours=6): bad_open = True
         elif r.get("status") == "ok": bad_open = False
     c["conflitos"] = (not bad_open, "lote com conflito/inválido sem sucesso posterior" if bad_open else "ok")
+    done = [r for r in runs if r.get("status") != "running"][-ABORT_STREAK:]
+    aborting = len(done) == ABORT_STREAK and all(r.get("status") == "aborted" for r in done)
+    last_err = ""
+    if aborting:
+        try: last_err = (json.loads(done[-1].get("summary") or "{}").get("error") or "")[:160]
+        except Exception: pass
+    c["lotes_abortando"] = (not aborting, f"últimos {ABORT_STREAK} lotes abortados: {last_err}" if aborting else "ok")
+    if proxy is not None: c["proxy"] = proxy
     c["disco"] = (disk_free_pct > 20, f"{disk_free_pct:.0f}% livre")
     pend = sum(1 for k, v in records_map.items() if terminal_state(v) is None)
     c["fila"] = (pend <= cfg.queue_max, f"{pend} pendentes")

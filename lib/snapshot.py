@@ -13,6 +13,7 @@ class Snap:
 
 class Snapshot:
     MAX_FILES = 300
+    SKIP_DIRS = ("contatos",)     # páginas automáticas do ecosystem-knowledge (milhares): fora do snapshot e do MAX_FILES
 
     def __init__(self, store, cfg):
         self.store, self.cfg = store, cfg
@@ -20,7 +21,9 @@ class Snapshot:
     def pull(self) -> Snap:
         root = self.cfg.vault_root.rstrip("/")
         snap = Snap()
-        entries = [e for e in self.store.list(self.cfg.vault_path(self.cfg.wiki_dir)) if e["path"].endswith(".md")]
+        wiki = self.cfg.vault_path(self.cfg.wiki_dir).rstrip("/")
+        skip = tuple(f"{wiki}/{d}/".lower() for d in self.SKIP_DIRS)
+        entries = [e for e in self.store.list(wiki) if e["path"].endswith(".md") and not e["path"].lower().startswith(skip)]
         if len(entries) > self.MAX_FILES:
             raise RuntimeError(f"wiki com {len(entries)} arquivos .md > {self.MAX_FILES}")
         for e in entries:

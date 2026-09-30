@@ -33,6 +33,37 @@ def test_conflict_run_fails_until_ok_after(tmp_path):
     r2 = j.start_run("distill", [1]); j.finish_run(r2, "ok", {})
     h = run_checks(j, {}, Config(), now, now, 60.0, now, tmp_path); assert h.checks["conflitos"][0]
 
+def test_aborted_runs_fail_until_ok_after(tmp_path):
+    """Todo lote abortando (ex.: wiki > MAX_FILES em 2026-09-30) com health OK: 3 seguidos derrubam o health."""
+    j, now = base(tmp_path)
+    for _ in range(2):
+        r = j.start_run("distill", [1]); j.finish_run(r, "aborted", {"error": "RuntimeError: wiki com 4685 arquivos .md > 300"})
+    h = run_checks(j, {}, Config(), now, now, 60.0, now, tmp_path); assert h.checks["lotes_abortando"][0]
+    r = j.start_run("distill", [1]); j.finish_run(r, "aborted", {"error": "RuntimeError: wiki com 4685 arquivos .md > 300"})
+    j.start_run("distill", [1])                                   # órfão "running" não conta nem zera
+    h = run_checks(j, {}, Config(), now, now, 60.0, now, tmp_path)
+    assert not h.ok and not h.checks["lotes_abortando"][0] and "4685" in h.checks["lotes_abortando"][1]
+    r = j.start_run("distill", [1]); j.finish_run(r, "ok", {})
+    h = run_checks(j, {}, Config(), now, now, 60.0, now, tmp_path); assert h.checks["lotes_abortando"][0]
+
+def test_proxy_check(tmp_path):
+    j, now = base(tmp_path)
+    h = run_checks(j, {}, Config(), now, now, 60.0, now, tmp_path); assert "proxy" not in h.checks   # sem proxy configurado
+    h = run_checks(j, {}, Config(), now, now, 60.0, now, tmp_path, proxy=(False, "timed out"))
+    assert not h.ok and h.checks["proxy"] == (False, "timed out")
+    h = run_checks(j, {}, Config(), now, now, 60.0, now, tmp_path, proxy=(True, "ok")); assert h.ok
+
+def test_proxy_probe():
+    from lib.health import proxy_probe
+    class Resp:
+        status = 204
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    assert proxy_probe("http://p:1", open_with=lambda proxy: (lambda req, timeout: Resp()))[0] is True
+    def bad(req, timeout): raise OSError("timed out")
+    ok, info = proxy_probe("http://p:1", open_with=lambda proxy: bad)
+    assert ok is False and "timed out" in info
+
 def test_files_and_ping(tmp_path):
     j, now = base(tmp_path)
     h = run_checks(j, {}, Config(), now, now, 60.0, now, tmp_path)

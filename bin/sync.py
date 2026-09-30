@@ -15,7 +15,7 @@ from lib.queue import pending, needs_capture, needs_distill, is_nowiki
 from lib.capture import Deps as CapDeps, capture_one
 from lib.batch import BatchDeps, breaker_since, run_batch, should_run
 from lib.snapshot import Snapshot, UndoRepo
-from lib.health import run_checks, write_health_files, ping_uptimerobot, status_md, claude_auth_probe
+from lib.health import run_checks, write_health_files, ping_uptimerobot, status_md, claude_auth_probe, proxy_probe
 from lib.undo import undo_run
 from lib.fetcher import fetch
 
@@ -42,7 +42,9 @@ class App:
         self.bat = BatchDeps(cfg=cfg, store=self.store, records=self.records, raindrop=self.raindrop, journal=self.journal,
                              snapshot=Snapshot(self.store, cfg), undo_repo=UndoRepo(self.work / "wiki-git"), token=cfg.claude_oauth_token,
                              prompt_template=(SKILL / "prompts/distill.md").read_text(encoding="utf-8"), schema_path=SKILL / "schema/distill.json", triggers_vocab=vocab)
-        self.last_poll = None; self.heartbeat = None; self.auth_ok = None; self.first_pending = None; self.public_dir = Path(env.get("HEALTH_PUBLIC_DIR", "/public/sync-raindrop"))
+        self.last_poll = None; self.heartbeat = None; self.auth_ok = None; self.first_pending = None
+        self.proxy_url = env.get("YTDLP_PROXY") or os.environ.get("YTDLP_PROXY"); self.proxy_state = None   # (quando, (ok, info))
+        self.public_dir = Path(env.get("HEALTH_PUBLIC_DIR", "/public/sync-raindrop"))
 
     def now(self): return datetime.now(timezone.utc).astimezone(ZoneInfo(self.cfg.tz))
 
@@ -107,9 +109,11 @@ class App:
         if self.auth_ok is None or (self.now() - self.auth_ok).total_seconds() > 86400 / 2:
             ok, _ = claude_auth_probe(cfg, cfg.claude_oauth_token)
             if ok: self.auth_ok = self.now()
+        if self.proxy_url and (self.proxy_state is None or (self.now() - self.proxy_state[0]).total_seconds() > 600):
+            self.proxy_state = (self.now(), proxy_probe(self.proxy_url))       # 1 sonda a cada 10 min, não a cada ciclo
         free = shutil.disk_usage(self.work).free / shutil.disk_usage(self.work).total * 100
         h = run_checks(self.journal, recs, cfg, self.now(), self.last_poll, free, self.auth_ok, self.work,
-                       heartbeat_ts=self.heartbeat)
+                       heartbeat_ts=self.heartbeat, proxy=self.proxy_state[1] if self.proxy_state else None)
         write_health_files(h, self.public_dir, self.work); ping_uptimerobot(cfg.uptimerobot_url, h)
         md = status_md(self.journal, recs, cfg, h, self.journal.count_groq_seconds_today(cfg.tz))
         (self.work / "status.md").write_text(md, encoding="utf-8")

@@ -12,6 +12,17 @@ def test_pull_reads_wiki_and_claude_md():
     assert snap.files["wiki/a.md"][0] == b"# A" and snap.files["wiki/a.md"][1]
 
 
+def test_pull_skips_contatos_and_does_not_count_them():
+    """wiki/contatos/ são milhares de páginas automáticas (ecosystem-knowledge): não entram no snapshot
+    nem contam para o MAX_FILES — senão todo lote aborta (2026-09-30, 4.685 .md > 300)."""
+    store = make_store(); cfg = Config()
+    store.add("/Projects/vault/wiki/a.md", b"# A")
+    for i in range(Snapshot.MAX_FILES + 5):
+        store.add(f"/Projects/vault/wiki/contatos/c{i}.md", b"auto")
+    snap = Snapshot(store, cfg).pull()
+    assert set(snap.files) == {"wiki/a.md"}
+
+
 def test_undo_repo_commits(tmp_path):
     repo = UndoRepo(tmp_path / "wiki-git")
     sha1 = repo.commit_snapshot(Snap({"wiki/a.md": (b"v1", "r1")}), "pull run1")
