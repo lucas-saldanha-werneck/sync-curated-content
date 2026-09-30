@@ -29,10 +29,12 @@ class Snapshot:
         for e in entries:
             rel = e["path"][len(root) + 1:]
             snap.files[rel] = self.store.download(e["path"])
+        # sem as regras do vault o destilador escrevia na wiki às cegas, sem erro visível (engolido até 2026-09-30):
+        # falhar alto aborta o lote, e 3 lotes abortados seguidos derrubam o health (lotes_abortando)
         try:
             snap.files["CLAUDE.md"] = self.store.download(self.cfg.vault_path("CLAUDE.md"))
         except FileNotFoundError:
-            pass
+            raise RuntimeError(f"regras do vault ausentes: {self.cfg.vault_path('CLAUDE.md')} não existe") from None
         return snap
 
 

@@ -16,11 +16,21 @@ def test_pull_skips_contatos_and_does_not_count_them():
     """wiki/contatos/ são milhares de páginas automáticas (ecosystem-knowledge): não entram no snapshot
     nem contam para o MAX_FILES — senão todo lote aborta (2026-09-30, 4.685 .md > 300)."""
     store = make_store(); cfg = Config()
-    store.add("/Projects/vault/wiki/a.md", b"# A")
+    store.add("/Projects/vault/wiki/a.md", b"# A"); store.add("/Projects/vault/CLAUDE.md", b"regras")
     for i in range(Snapshot.MAX_FILES + 5):
         store.add(f"/Projects/vault/wiki/contatos/c{i}.md", b"auto")
     snap = Snapshot(store, cfg).pull()
-    assert set(snap.files) == {"wiki/a.md"}
+    assert set(snap.files) == {"wiki/a.md", "CLAUDE.md"}
+
+
+def test_pull_fails_loud_without_claude_md():
+    """Sem vault/CLAUDE.md o destilador rodava sem as regras da wiki e ninguém via (erro engolido até 2026-09-30).
+    Agora o lote aborta com mensagem clara; 3 seguidos derrubam o health (lotes_abortando)."""
+    import pytest
+    store = make_store(); cfg = Config()
+    store.add("/Projects/vault/wiki/a.md", b"# A")
+    with pytest.raises(RuntimeError, match="CLAUDE.md"):
+        Snapshot(store, cfg).pull()
 
 
 def test_undo_repo_commits(tmp_path):

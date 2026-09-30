@@ -20,10 +20,11 @@ As aspas duplas de fora são obrigatórias. O SSH junta os argumentos e o shell 
 - `status` — mostra o `status.md` mais recente (última rodada, pendências, erros, quota do Groq).
 - `now` — enfileira uma rodada imediata (o serviço roda em loop; isso pula a fila).
 - `retry <id>` — reenfileira um item do Raindrop pelo id, zerando o contador de erro.
+- `recapture <id>` — reabre o item e manda refazer a CAPTURA (raw novo), não só a destilação. Use quando o raw veio vazio ou errado; `retry` só reenfileira.
 - `undo <run_id>` — desfaz um lote de destilação (reverte o commit da wiki e os arquivos em `raw/curated/`).
-- `backfill --all [--dry-run] [--continue]` — varre o Raindrop inteiro atrás de itens pendentes. `--dry-run` só mostra a contagem; sem `--continue` ele para a cada 20 itens processados (checkpoint) para o Lucas revisar a wiki antes de seguir.
+- `backfill --all | --since AAAA-MM-DD [--dry-run] [--continue]` — varre o Raindrop (inteiro, ou desde a data) atrás de itens pendentes. `--dry-run` só mostra a contagem; sem `--continue` ele para a cada 20 itens processados (checkpoint) para o Lucas revisar a wiki antes de seguir.
 
-Flag fora desta lista (ex.: `--bare`) não existe no CLI atual: dá erro, sem fallback silencioso.
+Comando ou flag fora desta lista (ex.: `--bare`) dá erro, sem fallback silencioso. `run` e `once` também existem, mas são do próprio serviço (o loop do container e uma rodada síncrona de debug) — o serviço já roda em loop, não chame no dia a dia.
 
 ## Como usar
 
