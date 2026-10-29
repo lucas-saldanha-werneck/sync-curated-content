@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12 (`sqlite3`, `urllib`, `subprocess`, `json`, `re`, `ipaddress`, `hashlib`), `dropbox` SDK (CAS via `WriteMode.update(rev)`/`add`), `trafilatura`, `yt-dlp` + `ffmpeg` + `poppler-utils`, Node 22 + `@anthropic-ai/claude-code` (headless), `git`, `tinyproxy` (egress guard), Docker Compose na VPS `nova` (Ubuntu 22.04). Testes: `pytest` (mocks por injeção, sem rede). Desenvolvimento no Mac (`/opt/homebrew/bin/python3` 3.14 roda os testes; produção é 3.12 no container — não usar sintaxe > 3.12).
 
-**Spec:** `Projects/.claude/skills/sync-raindrop/DESIGN.md` (v0.4.1). Revisões: `PLAN-REVIEW-LOG.md`.
+**Spec:** `Projects/.claude/skills/sync-curated-content/DESIGN.md` (v0.4.1). Revisões: `PLAN-REVIEW-LOG.md`.
 
 ## Global Constraints
 
@@ -31,7 +31,7 @@
 ## Mapa de arquivos
 
 ```
-$SKILL = Projects/.claude/skills/sync-raindrop/
+$SKILL = Projects/.claude/skills/sync-curated-content/
   config.json                    Task 1   limites, modelo, vocabulário de tipos/gatilhos, caminhos
   lib/__init__.py, lib/config.py Task 1   Config (dataclass) + load_config(path, env)
   lib/journal.py                 Task 2   Journal (SQLite WAL): items, ops, runs, lock singleton

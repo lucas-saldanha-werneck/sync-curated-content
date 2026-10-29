@@ -117,7 +117,7 @@ Ajuste nas skills irmãs (entrega do v1, 2 linhas cada): `ingest` e `lint` do Ma
 | linkedin.com | Apify (actor da skill `linkedin-perfil`) | `sr:parcial` | — | |
 | x.com | fxtwitter/syndication (texto) + yt-dlp (vídeo) | `sr:parcial` | — | |
 | PDF | `pdftotext` (≤ 60 páginas) | — | — | |
-| artigo | trafilatura | Jina Reader | Firecrawl | escada do `web-access/bin/fetch.sh` |
+| artigo | trafilatura | Jina Reader | Firecrawl | escada do `web-unlock/bin/fetch.sh` |
 
 ### 6.1 Vídeo: reaproveitar `bradautomates/claude-video` (MIT, 17.060 ★, push 2026-07-01)
 
@@ -170,7 +170,7 @@ Regras do prompt (`prompts/distill.md`, versionado): claims concretos e atribuí
 - **SSRF (especificado e testado):** antes de cada conexão, resolver DNS e rejeitar IPv4/IPv6 em `127/8, 10/8, 172.16/12, 192.168/16, 169.254/16, 100.64/10, ::1, fc00::/7, fe80::/10`; re-verificar após **cada** redirect (máx. 5); só `http/https`; yt-dlp com `--proxy` apontando para um proxy local (`tinyproxy`) que aplica a mesma lista de bloqueio — vale para todos os fetchers. Egress do container: rede Docker própria com regra `iptables` no host bloqueando RFC1918/link-local de saída. Testes: URL apontando para `169.254.169.254`, `http://localhost`, redirect 302 para IP privado, DNS rebinding simulado → todos rejeitados.
 - Volumes: `/var/lib/sync-raindrop/` (sqlite, wiki-git, runs, modelos nenhum).
 - `.env`: `RAINDROP_TOKEN`, `DROPBOX_REFRESH_TOKEN` + `DROPBOX_APP_KEY/SECRET` (app próprio, escopos `files.content.read/write` só), `GROQ_API_KEY` (nova), `CLAUDE_CODE_OAUTH_TOKEN`, `APIFY_TOKEN`, `JINA_API_KEY`, `FIRECRAWL_API_KEY`, `UPTIMEROBOT_HEARTBEAT_URL`, `CUTOFF=2026-09-DD`, `CLAUDE_MODEL=claude-fable-5-1`, `POLL_SECONDS=30`, `BATCH_MIN_ITEMS=5`, `BATCH_MAX_WAIT_MIN=15`, `MAX_BATCHES_PER_DAY=12`.
-- Código: `Projects/.claude/skills/sync-raindrop/` (git local, `.git` com `com.dropbox.ignored`), `deploy.sh nova` = rsync + `docker compose up -d --build` (padrão do `wa-archiver`).
+- Código: `Projects/.claude/skills/sync-curated-content/` (git local, `.git` com `com.dropbox.ignored`), `deploy.sh nova` = rsync + `docker compose up -d --build` (padrão do `wa-archiver`).
 
 ## 10. Falhas e limites
 

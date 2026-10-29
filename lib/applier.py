@@ -43,9 +43,23 @@ def marker(item_id: int, today: str) -> str:
     return f"<!-- curated:r{item_id} {today} -->"
 
 
+TAIL_HEADINGS = ("## fontes", "## ver também")
+
+
 def insert_after_anchor(text: str, anchor: str, block: str) -> str | None:
-    if anchor == "":
-        return text.rstrip("\n") + "\n" + block + "\n"
+    if anchor == "" or anchor.strip().lower() in TAIL_HEADINGS:
+        # sem âncora (ou âncora "Fontes"/"Ver também"): entra antes do bloco final dessas seções, nunca dentro dele (bug 2026-10-02)
+        lines = text.rstrip("\n").split("\n")
+        cut = len(lines)
+        for i in range(len(lines) - 1, -1, -1):
+            h = lines[i].strip().lower()
+            if h.startswith("## "):
+                if h not in TAIL_HEADINGS:
+                    break
+                cut = i
+        if cut == len(lines):
+            return "\n".join(lines) + "\n" + block + "\n"
+        return "\n".join(lines[:cut] + [block, ""] + lines[cut:]) + "\n"
     lines = text.split("\n")
     for i, ln in enumerate(lines):
         if ln.strip() == anchor.strip():
