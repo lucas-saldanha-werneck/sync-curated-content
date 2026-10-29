@@ -101,3 +101,14 @@ def test_status_conta_item_esperando_recaptura_como_pendente(tmp_path):
     h = run_checks(j, recs, Config(), now, now, 60.0, now, tmp_path, heartbeat_ts=now)
     md = status_md(j, recs, Config(), h, 0)
     assert "| pendente | 1 |" in md and "| captured |" not in md
+
+
+def test_status_signature_ignora_horarios_mas_pega_mudanca_real():
+    """status.md sobe ao Dropbox só quando muda algo além das horas (2026-10-28: regravar a cada 30 s
+    deixava o Dropbox do Mac em "Syncing…" 81% do tempo)."""
+    from lib.health import status_signature
+    a = "# sync-raindrop — status 2026-10-28T14:03:19-03:00\n- ✅ loop_vivo: último batimento 2026-10-28 14:03:14.676798-03:00\n| wiki | 126 |\n"
+    b = "# sync-raindrop — status 2026-10-28T14:03:49-03:00\n- ✅ loop_vivo: último batimento 2026-10-28 14:03:44.1-03:00\n| wiki | 126 |\n"
+    c = b.replace("| wiki | 126 |", "| wiki | 127 |")
+    assert status_signature(a) == status_signature(b)
+    assert status_signature(b) != status_signature(c)

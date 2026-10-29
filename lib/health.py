@@ -1,6 +1,6 @@
 """Saúde: checks reais antes de qualquer ping; status.md legível; prova de auth do Claude."""
 from __future__ import annotations
-import json, os, subprocess, urllib.request
+import json, os, re, subprocess, urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -83,6 +83,14 @@ def status_md(journal, records_map, cfg, h: Health, groq_used: int) -> str:
     errs = [dict(r) for r in journal.con.execute("SELECT id,last_error,updated_at FROM items WHERE last_error IS NOT NULL ORDER BY updated_at DESC LIMIT 10")]
     if errs: lines += ["", "## Últimos erros", ""] + [f"- r{e['id']} ({e['updated_at']}): {str(e['last_error'])[:160]}" for e in errs]
     return "\n".join(lines) + "\n"
+
+_TS = re.compile(r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{2}:\d{2})?")
+STATUS_UPLOAD_MAX_AGE = 3600   # s: sem mudança real, o status.md sobe ao Dropbox no máximo 1×/h
+
+def status_signature(md: str) -> str:
+    """status.md sem os horários. Regravar no Dropbox a cada 30 s só por causa da hora deixava o Dropbox
+    do Mac em "Syncing…" 81% do tempo (teste de 2026-10-28); o heartbeat fresco vai no health.json público."""
+    return _TS.sub("<ts>", md)
 
 def claude_auth_probe(cfg, token: str, runner=subprocess.run) -> tuple[bool, str]:
     env = {"CLAUDE_CODE_OAUTH_TOKEN": token, "CLAUDE_CONFIG_DIR": "/tmp/cc-probe", "HOME": "/tmp", "PATH": os.environ.get("PATH", ""), "TZ": cfg.tz}

@@ -15,7 +15,7 @@ from lib.queue import pending, needs_capture, needs_distill, is_nowiki
 from lib.capture import Deps as CapDeps, capture_one
 from lib.batch import BatchDeps, breaker_since, run_batch, should_run
 from lib.snapshot import Snapshot, UndoRepo
-from lib.health import run_checks, write_health_files, ping_uptimerobot, status_md, claude_auth_probe, proxy_probe
+from lib.health import run_checks, write_health_files, ping_uptimerobot, status_md, claude_auth_probe, proxy_probe, status_signature, STATUS_UPLOAD_MAX_AGE
 from lib.undo import undo_run
 from lib.fetcher import fetch
 
@@ -118,11 +118,14 @@ class App:
         md = status_md(self.journal, recs, cfg, h, self.journal.count_groq_seconds_today(cfg.tz))
         (self.work / "status.md").write_text(md, encoding="utf-8")
         p = cfg.vault_path(f"{cfg.state_dir}/status.md")
-        try:
-            ok, rev, _ = self.store.exists(p)
-            self.store.update(p, md.encode(), rev) if ok else self.store.add(p, md.encode())
-        except Exception as e:
-            self.journal.upsert_item(0, last_error=f"status.md: {e}")
+        ssig, last = status_signature(md), getattr(self, "_status_up", None)    # (assinatura, monotonic)
+        if last is None or last[0] != ssig or time.monotonic() - last[1] >= STATUS_UPLOAD_MAX_AGE:
+            try:
+                ok, rev, _ = self.store.exists(p)
+                self.store.update(p, md.encode(), rev) if ok else self.store.add(p, md.encode())
+                self._status_up = (ssig, time.monotonic())
+            except Exception as e:
+                self.journal.upsert_item(0, last_error=f"status.md: {e}")
         # catalog-index.jsonl: 1 linha por item com registro "distill" — alimenta o hook do Mac (Tarefa 24)
         # Só reconstrói quando o conjunto de registros muda (2 downloads por item destilado — review Opus M5)
         sig = hash(tuple(sorted((i, tuple(sorted(k))) for i, k in recs.items())))
