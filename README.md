@@ -62,3 +62,11 @@ ID do monitor: `803965554`.
 ### Groq — feito (2026-09-11 05:20)
 `GROQ_API_KEY` no `.env` da VPS é uma chave própria do `sync-raindrop` (não é mais a do LensReport). Para trocar: nova chave em `console.groq.com/keys`, editar o `.env`, `docker compose restart`.
 
+
+## Credits
+
+The idea to build this came from Austin Marchese's video [How to Build A Self-Improving System with Claude](https://www.youtube.com/watch?v=2fc0NX9vIJ8). This is my own build of that idea for Claude Code: saved links go into a wiki vault that Claude keeps up to date.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
