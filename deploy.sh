@@ -22,6 +22,9 @@ ssh "$HOST" 'set -e
   chown -R 10001:10001 /var/lib/sync-raindrop /opt/files/public/sync-raindrop
   install -m 755 /opt/sync-raindrop/app/host/health-stale.sh /usr/local/bin/sync-raindrop-health-stale
   ( crontab -l 2>/dev/null | grep -v sync-raindrop-health-stale; echo "*/5 * * * * /usr/local/bin/sync-raindrop-health-stale" ) | crontab -
+  # o serviço roda como app, não root: pasta local 700 vira 700 no /app e o container cai em
+  # "Permission denied" (11/11/2026; o rsync do macOS ignora --chmod). Libera leitura antes do build.
+  chmod -R go+rX /opt/sync-raindrop/app
   bash /opt/sync-raindrop/app/host/docker-user-egress.sh
   cd /opt/sync-raindrop/app
   docker compose build --pull
