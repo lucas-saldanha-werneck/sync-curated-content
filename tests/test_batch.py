@@ -43,7 +43,7 @@ def test_run_batch_happy_path(tmp_path):
     assert res["items"][1] == "wiki" and res["ops"] >= 3
     deps.records.refresh(); assert deps.records.state(1) == "wiki"
     page, _ = store.download("/Projects/vault/wiki/energia-e-recarga.md"); assert b"curated:r1" in page
-    assert store.exists("/Projects/vault/wiki/ferramentas-e-ideias.md")[0] and store.exists("/Projects/vault/wiki/log/2026-09_curated.md")[0]
+    assert store.exists("/Projects/vault/wiki/ferramentas-e-ideias.md")[0] and store.exists(f"/Projects/vault/wiki/log/{datetime.now():%Y-%m}_curated.md")[0]
     assert rd.puts[-1][0] == ["sr:wiki"] and "sr:raw" in rd.puts[-1][1]
     assert deps.journal.runs_today("distill", "America/Sao_Paulo") == 1
 
@@ -166,7 +166,7 @@ def test_late_nowiki_writes_nothing_for_that_item_in_a_two_item_batch(tmp_path):
     assert res["status"] == "ok" and res["items"][1] == "wiki" and res["items"][2] == "nowiki"
     page, _ = store.download("/Projects/vault/wiki/energia-e-recarga.md"); assert b"curated:r1" in page and b"curated:r2" not in page
     cat, _ = store.download("/Projects/vault/wiki/ferramentas-e-ideias.md"); assert b"<!-- r1 -->" in cat and b"<!-- r2 -->" not in cat
-    log, _ = store.download("/Projects/vault/wiki/log/2026-09_curated.md"); assert b" r1 " in log and b" r2 " not in log
+    log, _ = store.download(f"/Projects/vault/wiki/log/{datetime.now():%Y-%m}_curated.md"); assert b" r1 " in log and b" r2 " not in log
     deps.records.refresh(); assert deps.records.state(2) == "nowiki" and "distill" not in deps.records.kinds(2)
 
 
