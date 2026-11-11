@@ -5,3 +5,5 @@ __pycache__/
 runs/
 .venv/
 .superpowers/
+.DS_Store
+.git.parcial-*/
