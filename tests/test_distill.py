@@ -117,3 +117,22 @@ def test_build_workspace_pretrusts_the_workspace(tmp_path):
     cfgj = json.loads((ws / ".cc/.claude.json").read_text())
     assert cfgj["projects"][str(ws)]["hasTrustDialogAccepted"] is True
     assert (ws / ".cc/.claude.json").stat().st_mode & 0o200            # o claude reescreve esse arquivo
+
+
+def test_claude_credito_used_with_console_key(tmp_path, monkeypatch):
+    import lib.distill as d
+    monkeypatch.setattr(d.shutil, "which", lambda name, path=None: f"/usr/bin/{name}")
+    cfg = Config(claude_credit_api_key="console-key-for-test")
+    assert claude_cmd(cfg, Path("schema/distill.json"), "oi")[0] == "claude-credito"
+    seen = {}
+    def runner(cmd, **k): seen.update(k.get("env", {})); return type("P", (), {"returncode": 0, "stdout": '{"structured_output": {"items": []}}', "stderr": ""})()
+    run_claude(tmp_path, cfg, "tok", "p", Path("schema/distill.json"), runner=runner)
+    assert seen["CLAUDE_CREDITO_KEY"] == "console-key-for-test" and seen["CLAUDE_CODE_OAUTH_TOKEN"] == "tok"
+    assert seen["CLAUDE_CREDITO_REAL"] == "/usr/bin/claude" and seen["CLAUDE_CREDITO_KEYCHAIN"] == "off"
+
+
+def test_plain_claude_when_credito_missing(tmp_path, monkeypatch):
+    import lib.distill as d
+    monkeypatch.setattr(d.shutil, "which", lambda name, path=None: None)
+    cfg = Config(claude_credit_api_key="console-key-for-test")
+    assert claude_cmd(cfg, Path("schema/distill.json"), "oi")[0] == "claude"

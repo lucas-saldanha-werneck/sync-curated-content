@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Mapping
 
 REQUIRED = ["RAINDROP_TOKEN", "DROPBOX_REFRESH_TOKEN", "DROPBOX_APP_KEY", "DROPBOX_APP_SECRET", "GROQ_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
-OPTIONAL = ["APIFY_TOKEN", "JINA_API_KEY", "FIRECRAWL_API_KEY", "UPTIMEROBOT_URL"]
+OPTIONAL = ["APIFY_TOKEN", "JINA_API_KEY", "FIRECRAWL_API_KEY", "UPTIMEROBOT_URL", "CLAUDE_CREDIT_API_KEY"]
 INT_KEYS = {"poll_seconds", "batch_min_items", "batch_max_wait_min", "batch_max_items", "max_batches_per_day",
             "max_files_per_batch", "max_delta_bytes", "max_images_per_batch", "frames_max", "frames_short_max",
             "media_max_mb", "media_max_min", "pdf_max_pages", "queue_max", "groq_daily_seconds", "claude_timeout_s",
@@ -57,6 +57,9 @@ class Config:
     jina_api_key: str | None = None
     firecrawl_api_key: str | None = None
     uptimerobot_url: str | None = None
+    # chave do Console (crédito mensal de API do plano): com ela o claude roda via claude-credito,
+    # que tenta a API e, se ela recusar, refaz a mesma chamada na assinatura (CLAUDE_CODE_OAUTH_TOKEN)
+    claude_credit_api_key: str | None = None
 
     def vault_path(self, rel: str) -> str:
         """Caminho absoluto no Dropbox (sempre começa com /)."""

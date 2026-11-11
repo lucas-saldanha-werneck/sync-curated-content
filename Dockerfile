@@ -31,6 +31,7 @@ RUN ( git clone --depth 1 https://github.com/Brainicism/bgutil-ytdlp-pot-provide
 WORKDIR /app
 COPY . /app
 RUN chmod +x /app/entrypoint.sh /app/bin/sync.sh \
+    && install -m 755 /app/vendor/claude-credito /usr/local/bin/claude-credito \
     && mkdir -p /etc/tinyproxy \
     && cp /app/tinyproxy.conf /etc/tinyproxy/tinyproxy.conf \
     && cp /app/tinyproxy.filter /etc/tinyproxy/filter
