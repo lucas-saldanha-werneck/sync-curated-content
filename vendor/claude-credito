@@ -1,0 +1,192 @@
+#!/bin/bash
+# claude-credito - run `claude -p` on your plan's monthly API credit first and, when the API refuses,
+# run the SAME call again on your subscription. For scripts and scheduled jobs: call this instead of `claude`.
+#
+# Why: the monthly API credit of a Claude plan pays for `claude -p` and the Agent SDK only when they run
+# with a Console API key. An interactive session is not covered, so a call without -p/--print is passed
+# straight to claude, with no key.
+#
+# Usage:
+#   claude-credito -p [claude args...]   same as claude: same stdout, stderr and exit code
+#   claude-credito --credit-status       key, pause, the claude it runs, and the last log lines
+#   claude-credito --credit-store-key    store the Console key (macOS Keychain, or a 600 file elsewhere)
+#   claude-credito --credit-resume       end the pause now
+#   claude-credito --credit-help         this text
+#
+# How it decides:
+#   1. No -p/--print, CLAUDE_CREDITO=off, or ANTHROPIC_API_KEY already set by the caller -> plain claude.
+#   2. Paused (the API refused less than CLAUDE_CREDITO_PAUSE_S ago, default 6 h) -> subscription.
+#   3. No key stored -> subscription.
+#   4. Otherwise it runs with the key. A short reply with "Credit balance is too low", "Invalid API key"
+#      or another billing/key error -> it starts the pause and runs the call again on the subscription.
+#
+# Settings: environment variables, or KEY=VALUE lines in ~/.config/claude-credito/config (the environment wins).
+#   CLAUDE_CREDITO=off            never use the API
+#   CLAUDE_CREDITO_REAL           the claude to run (default: the first `claude` on PATH that is not this tool)
+#   CLAUDE_CREDITO_KEY            the key itself (default: the stored one)
+#   CLAUDE_CREDITO_KEY_COMMAND    a command that prints the key; --credit-store-key uses it instead of asking
+#   CLAUDE_CREDITO_KEYCHAIN=off   do not use the macOS Keychain (use the key file)
+#   CLAUDE_CREDITO_PAUSE_S        seconds to stay on the subscription after a refusal (default 21600)
+#   CLAUDE_CREDITO_LOG            log file      CLAUDE_CREDITO_STATE   folder of the pause file
+#   CLAUDE_CREDITO_CONFIG         config file
+# PATH shim for scripts that call a bare `claude`: ~/.local/share/claude-credito/shim (see the README).
+
+set -u
+VERSION="0.1.2"
+SELF="${BASH_SOURCE[0]}"
+CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-credito"
+CONFIG="${CLAUDE_CREDITO_CONFIG:-$CONF_DIR/config}"
+
+# Config file: KEY=VALUE lines, CLAUDE_CREDITO* only, never executed. A variable already set wins.
+if [[ -f "$CONFIG" ]]; then
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" =~ ^[[:space:]]*(CLAUDE_CREDITO[A-Z_]*)=(.*)$ ]] || continue
+    k="${BASH_REMATCH[1]}"; v="${BASH_REMATCH[2]}"
+    v="${v%$'\r'}"
+    if [[ "$v" == \"*\" || "$v" == \'*\' ]]; then v="${v:1:${#v}-2}"; fi
+    [[ "$v" == "~/"* ]] && v="$HOME/${v:2}"
+    [[ -n "${!k:-}" ]] || printf -v "$k" '%s' "$v"
+  done < "$CONFIG"
+fi
+
+STATE="${CLAUDE_CREDITO_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/claude-credito}"
+if [[ -n "${CLAUDE_CREDITO_LOG:-}" ]]; then LOG="$CLAUDE_CREDITO_LOG"
+elif [[ -d "$HOME/Library/Logs" ]]; then LOG="$HOME/Library/Logs/claude-credito.log"
+else LOG="$STATE/claude-credito.log"; fi
+PAUSE="$STATE/paused"
+PAUSE_S="${CLAUDE_CREDITO_PAUSE_S:-21600}"
+[[ "$PAUSE_S" =~ ^[0-9]+$ ]] || PAUSE_S=21600
+KEY_FILE="$CONF_DIR/key"
+KC_SERVICE="claude-credito"
+KC_ACCOUNT="console-key"
+REFUSED_RE='Credit balance is too low|Invalid API key|invalid x-api-key|billing_error|authentication_error|permission_error|API key (is|has been) (expired|revoked|disabled)'
+NOTICE_RE='^⚠ claude\.ai connectors are disabled because ANTHROPIC_API_KEY'
+
+log() {
+  mkdir -p "$(dirname "$LOG")" 2>/dev/null
+  printf '%s %s (%s)\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" "${PWD/#$HOME/~}" >> "$LOG" 2>/dev/null || true
+}
+
+# The claude to run: the setting, else the first `claude` on PATH that is neither this tool nor its shim.
+find_real() {
+  local c="${CLAUDE_CREDITO_REAL:-}" dir
+  if [[ -n "$c" && -x "$c" ]]; then printf '%s' "$c"; return 0; fi
+  local IFS=:
+  for dir in $PATH; do
+    c="${dir:-.}/claude"
+    [[ -f "$c" && -x "$c" ]] || continue
+    [[ "$c" -ef "$SELF" ]] && continue
+    head -c 400 "$c" 2>/dev/null | LC_ALL=C grep -q 'claude-credito' && continue
+    printf '%s' "$c"; return 0
+  done
+  [[ -x "$HOME/.local/bin/claude" ]] && { printf '%s' "$HOME/.local/bin/claude"; return 0; }
+  return 1
+}
+
+use_keychain() { [[ "${CLAUDE_CREDITO_KEYCHAIN:-on}" != "off" && -x /usr/bin/security ]]; }
+stored_key() {
+  local k=""
+  if use_keychain; then k="$(/usr/bin/security find-generic-password -s "$KC_SERVICE" -a "$KC_ACCOUNT" -w 2>/dev/null)"; fi
+  if [[ "$k" != sk-ant-* && -f "$KEY_FILE" ]]; then k="$(head -n 1 "$KEY_FILE" 2>/dev/null)"; fi
+  printf '%s' "$k"
+}
+
+# GNU stat first: on Linux `stat -f` means something else and prints text.
+mtime() {
+  local m
+  m="$(stat -c %Y "$1" 2>/dev/null)" || m="$(stat -f %m "$1" 2>/dev/null)"
+  [[ "$m" =~ ^[0-9]+$ ]] || m=0
+  printf '%s' "$m"
+}
+paused() {
+  [[ -f "$PAUSE" ]] || return 1
+  if (( $(date +%s) - $(mtime "$PAUSE") >= PAUSE_S )); then rm -f "$PAUSE" 2>/dev/null; return 1; fi
+  return 0
+}
+
+case "${1:-}" in
+  --credit-help)
+    sed -n '2,31p' "$SELF" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  --credit-version)
+    echo "claude-credito $VERSION"; exit 0 ;;
+  --credit-status|--credito-status)
+    k="$(stored_key)"
+    if [[ "$k" == sk-ant-* ]]; then echo "key: stored (ends in …${k: -4})"; else echo "key: NOT stored (run: claude-credito --credit-store-key)"; fi
+    if paused; then
+      m="$(mtime "$PAUSE")"
+      echo "pause: on since $(date -r "$m" '+%Y-%m-%d %H:%M' 2>/dev/null || date -d "@$m" '+%Y-%m-%d %H:%M'), lasts ${PAUSE_S}s"
+    else echo "pause: off"; fi
+    echo "claude: $(find_real || echo 'NOT FOUND (set CLAUDE_CREDITO_REAL)')"
+    echo "log: $LOG"; tail -n 8 "$LOG" 2>/dev/null
+    exit 0 ;;
+  --credit-store-key|--credito-guardar-chave)
+    k=""
+    if [[ -n "${CLAUDE_CREDITO_KEY_COMMAND:-}" ]]; then
+      k="$(bash -c "$CLAUDE_CREDITO_KEY_COMMAND" 2>/dev/null | tail -n 1)"
+    elif [[ -t 0 ]]; then
+      printf 'Console API key (hidden): ' >&2; IFS= read -rs k; echo >&2
+    else
+      IFS= read -r k
+    fi
+    k="${k//[[:space:]]/}"
+    [[ "$k" == sk-ant-* ]] || { echo "that is not a Console API key (it starts with sk-ant-)" >&2; exit 1; }
+    if use_keychain; then
+      # through stdin, so the key never shows in the process list
+      printf 'add-generic-password -U -s %s -a %s -w %s\n' "$KC_SERVICE" "$KC_ACCOUNT" "$k" | /usr/bin/security -i >/dev/null 2>&1
+    else
+      mkdir -p "$CONF_DIR" && (umask 077; printf '%s\n' "$k" > "$KEY_FILE") && chmod 600 "$KEY_FILE"
+    fi
+    if [[ "$(stored_key)" == "$k" ]]; then echo "key stored (ends in …${k: -4})"; exit 0; fi
+    echo "could not store the key" >&2; exit 1 ;;
+  --credit-resume|--credito-despausar)
+    rm -f "$PAUSE" && echo "pause ended"; exit 0 ;;
+esac
+
+REAL="$(find_real)" || { echo "claude-credito: claude not found (install Claude Code or set CLAUDE_CREDITO_REAL)" >&2; exit 127; }
+
+# 1. Only a call with no conversation uses the credit.
+headless=0
+for a in "$@"; do [[ "$a" == "-p" || "$a" == "--print" ]] && { headless=1; break; }; done
+if (( ! headless )) || [[ "${CLAUDE_CREDITO:-on}" == "off" ]] || [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+  exec "$REAL" "$@"
+fi
+
+# 2. Paused -> subscription.
+if paused; then
+  log "subscription (paused)"
+  exec "$REAL" "$@"
+fi
+
+# 3. No key -> subscription.
+KEY="${CLAUDE_CREDITO_KEY:-}"
+[[ "$KEY" == sk-ant-* ]] || KEY="$(stored_key)"
+if [[ "$KEY" != sk-ant-* ]]; then
+  log "subscription (no key stored; run: claude-credito --credit-store-key)"
+  exec "$REAL" "$@"
+fi
+
+# 4. Run on the API, keeping stdin and the output so the call can be repeated on the subscription.
+T="$(mktemp -d "${TMPDIR:-/tmp}/claude-credito.XXXXXX")" || exec "$REAL" "$@"
+trap 'rm -rf "$T"' EXIT
+IN=/dev/null
+if [[ ! -t 0 ]]; then cat > "$T/in"; IN="$T/in"; fi
+
+rc=0
+ANTHROPIC_API_KEY="$KEY" "$REAL" "$@" < "$IN" > "$T/out" 2> "$T/err" || rc=$?
+
+size=$(( $(wc -c < "$T/out") + $(wc -c < "$T/err") ))
+if (( size < 6000 )) && grep -qhE "$REFUSED_RE" "$T/out" "$T/err" 2>/dev/null; then
+  why="$(grep -ohE "$REFUSED_RE" "$T/out" "$T/err" | head -n 1)"
+  mkdir -p "$STATE" 2>/dev/null; : > "$PAUSE"
+  log "API REFUSED ($why, rc=$rc); the same call goes to the subscription; API paused ${PAUSE_S}s"
+  rc=0
+  "$REAL" "$@" < "$IN" || rc=$?
+  log "subscription rc=$rc"
+  exit "$rc"
+fi
+
+# The "connectors are disabled because ANTHROPIC_API_KEY..." notice is not part of the answer.
+grep -vE "$NOTICE_RE" "$T/out" || true
+grep -vE "$NOTICE_RE" "$T/err" >&2 || true
+log "api rc=$rc"
+exit "$rc"

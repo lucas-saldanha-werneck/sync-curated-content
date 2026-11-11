@@ -95,13 +95,25 @@ def build_workspace(ws: Path, snap: Snap, raws: dict[str, bytes], frames: dict[s
     return ws
 
 
+CREDITO_BIN = "claude-credito"
+CREDITO_STATE = "/tmp/claude-credito"   # pausa de 6 h e registro; /tmp é o tmpfs gravável do container
+
+
+def claude_bin(cfg) -> str:
+    """claude-credito (crédito de API primeiro, assinatura se a API recusar) quando há chave do Console e o
+    binário existe; senão o claude puro, na assinatura."""
+    if getattr(cfg, "claude_credit_api_key", None) and shutil.which(CREDITO_BIN):
+        return CREDITO_BIN
+    return "claude"
+
+
 def claude_cmd(cfg, schema_path: Path, prompt: str) -> list[str]:
     # O prompt vem logo após -p, ANTES de --allowedTools/--disallowedTools: essas são flags
     # variádicas (commander.js, <tools...>) que continuam engolindo qualquer argumento seguinte
     # que não comece com "-" — se o prompt vier depois, ele some como "mais um tool name" e o
     # claude falha com "Input must be provided either through stdin or as a prompt argument"
     # (achado do spike da Task 0).
-    return ["claude", "-p", prompt,
+    return [claude_bin(cfg), "-p", prompt,
             "--model", cfg.claude_model,
             "--output-format", "json",
             "--json-schema", Path(schema_path).read_text(encoding="utf-8"),
@@ -115,6 +127,10 @@ def run_claude(ws: Path, cfg, token: str, prompt: str, schema_path: Path, runner
     ws = Path(ws)
     env = {"CLAUDE_CODE_OAUTH_TOKEN": token, "CLAUDE_CONFIG_DIR": str(ws / ".cc"), "HOME": str(ws / ".home"),
            "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"), "TZ": cfg.tz}
+    if claude_bin(cfg) == CREDITO_BIN:
+        env.update(CLAUDE_CREDITO_KEY=cfg.claude_credit_api_key, CLAUDE_CREDITO_KEYCHAIN="off",
+                   CLAUDE_CREDITO_REAL=shutil.which("claude", path=env["PATH"]) or "claude",
+                   CLAUDE_CREDITO_STATE=CREDITO_STATE, CLAUDE_CREDITO_LOG=f"{CREDITO_STATE}/claude-credito.log")
     try:
         p = runner(claude_cmd(cfg, schema_path, prompt), cwd=str(ws), env=env, capture_output=True, text=True,
                    timeout=cfg.claude_timeout_s, preexec_fn=_preexec_as_app_claude())
