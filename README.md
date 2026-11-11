@@ -65,7 +65,9 @@ ID do monitor: `803965554`.
 
 ## Credits
 
-The idea to build this came from Austin Marchese's video [How to Build A Self-Improving System with Claude](https://www.youtube.com/watch?v=2fc0NX9vIJ8). This is my own build of that idea for Claude Code: saved links go into a wiki vault that Claude keeps up to date.
+The idea of a wiki vault that Claude keeps up to date from your sources came from Austin Marchese's video [How to Build A Self-Improving System with Claude](https://www.youtube.com/watch?v=2fc0NX9vIJ8).
+
+The Raindrop part is my own and is not in the video: items I save in Raindrop are captured, transcribed and distilled into the vault by a service that runs on my VPS.
 
 ## License
 
