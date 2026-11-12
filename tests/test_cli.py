@@ -45,3 +45,51 @@ def test_recapture_command_enqueues_the_request(tmp_path, monkeypatch):
     reqs = j.pop_requests()
     assert [(r["cmd"], r["arg"]) for r in reqs] == [("recapture", "777")]
     j.close()
+
+
+def _backfill_setup(tmp_path, monkeypatch):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
+    import sync as cli
+    from tests.test_capture import FakeRD
+    from tests.test_dropbox_store import make as make_store
+    from lib.fetch_types import FetchResult
+    items = [{"id": 5, "link": "https://blog.com/y", "title": "Y", "excerpt": "", "note": "", "tags": [], "type": "article",
+              "created": "2026-09-10T10:00:00.000Z", "cover": "", "domain": "blog.com", "raw": {"_id": 5}}]
+    class RD(FakeRD):
+        def list_all(self, since_iso=None, **k): return items
+    store = make_store()
+    monkeypatch.setattr(cli, "make_raindrop", lambda cfg: RD(items[0]))
+    monkeypatch.setattr(cli, "make_store", lambda cfg, env: store)
+    monkeypatch.setattr(cli, "make_fetch_fn", lambda: (lambda it, work, cfg, secrets, journal: FetchResult(platform="article", text="t" * 500, method="trafilatura")))
+    env = {"RAINDROP_TOKEN": "t", "DROPBOX_REFRESH_TOKEN": "r", "DROPBOX_APP_KEY": "k", "DROPBOX_APP_SECRET": "s",
+           "GROQ_API_KEY": "g", "CLAUDE_CODE_OAUTH_TOKEN": "c", "WORK_DIR": str(tmp_path), "HEALTH_PUBLIC_DIR": str(tmp_path / "public")}
+    return cli, store, env, str(Path(__file__).resolve().parents[1] / "config.json")
+
+
+def test_backfill_refuses_while_daemon_holds_lock(tmp_path, monkeypatch, capsys):
+    """backfill grava no vault como o loop; sem o mesmo lock os dois escreveriam ao mesmo tempo."""
+    from lib.journal import Journal
+    from lib.config import Config
+    from lib.records import Records
+    cli, store, env, cfgp = _backfill_setup(tmp_path, monkeypatch)
+    daemon = Journal(tmp_path / "journal.db")
+    assert daemon.acquire_lock()
+    try:
+        rc = cli.main(["backfill", "--all", "--config", cfgp], env=env)
+    finally:
+        daemon.close()
+    assert rc == 2
+    assert "lock" in capsys.readouterr().out.lower()
+    rec = Records(store, Config(work_dir=str(tmp_path))); rec.refresh()
+    assert not rec.kinds(5)                                          # nada gravado
+
+
+def test_backfill_runs_and_releases_lock_when_free(tmp_path, monkeypatch):
+    from lib.journal import Journal
+    cli, store, env, cfgp = _backfill_setup(tmp_path, monkeypatch)
+    assert cli.main(["backfill", "--all", "--config", cfgp], env=env) == 0
+    j = Journal(tmp_path / "journal.db")
+    try:
+        assert j.acquire_lock()                                      # backfill soltou o lock ao terminar
+    finally:
+        j.close()

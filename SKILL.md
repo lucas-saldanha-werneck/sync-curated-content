@@ -12,17 +12,21 @@ Serviço que roda como container Docker na VPS `nova` (`/opt/sync-raindrop/app`,
 ## Comandos (sempre via SSH, sempre este formato)
 
 ```
-ssh nova "docker exec sync-raindrop sh -c 'set -a; . /secrets/.env; set +a; exec gosu app python3 /app/bin/sync.py <comando> [args]'"
+ssh nova "docker exec sync-raindrop sh -c 'set -a; . /secrets/.env; set +a; exec setpriv --reuid app --regid app --init-groups --inh-caps +setuid,+setgid --ambient-caps +setuid,+setgid python3 /app/bin/sync.py <comando> [args]'"
 ```
 
-As aspas duplas de fora são obrigatórias. O SSH junta os argumentos e o shell da VPS lê tudo de novo. Sem elas, as aspas simples somem: só o `set` roda no container (e imprime o ambiente dele) e o resto roda no host, onde `/secrets/.env` e `gosu` não existem.
+É a mesma troca de usuário do `entrypoint.sh`. Não use `gosu`: ele limpa as capabilities, e aí a queda para `app-fetch`/`app-claude` (lib/privs.py) falha.
+
+As aspas duplas de fora são obrigatórias. O SSH junta os argumentos e o shell da VPS lê tudo de novo. Sem elas, as aspas simples somem: só o `set` roda no container (e imprime o ambiente dele) e o resto roda no host, onde `/secrets/.env` e o usuário `app` não existem.
 
 - `status` — mostra o `status.md` mais recente (última rodada, pendências, erros, quota do Groq).
 - `now` — enfileira uma rodada imediata (o serviço roda em loop; isso pula a fila).
 - `retry <id>` — reenfileira um item do Raindrop pelo id, zerando o contador de erro.
 - `recapture <id>` — reabre o item e manda refazer a CAPTURA (raw novo), não só a destilação. Use quando o raw veio vazio ou errado; `retry` só reenfileira.
 - `undo <run_id>` — desfaz um lote de destilação (reverte o commit da wiki e os arquivos em `raw/curated/`).
-- `backfill --all | --since AAAA-MM-DD [--dry-run] [--continue]` — varre o Raindrop (inteiro, ou desde a data) atrás de itens pendentes. `--dry-run` só mostra a contagem; sem `--continue` ele para a cada 20 itens processados (checkpoint) para o Lucas revisar a wiki antes de seguir.
+- `backfill --all | --since AAAA-MM-DD [--dry-run] [--continue]` — varre o Raindrop (inteiro, ou desde a data) atrás de itens pendentes. `--dry-run` só mostra a contagem; sem `--continue` ele para a cada 20 itens processados (checkpoint) para o Lucas revisar a wiki antes de seguir. Sem `--dry-run`, o backfill pega o mesmo lock do serviço; com o serviço em loop ele recusa ("o lock está com outra instância") e sai com código 2. Para rodar: pare o serviço, rode o backfill num container avulso e suba o serviço de novo:
+  `ssh nova "cd /opt/sync-raindrop/app && docker compose stop && docker compose run --rm sync-raindrop backfill --all; docker compose start"`
+  (o `run` passa pelo `entrypoint.sh`, que já carrega os segredos e faz a troca de usuário).
 
 Comando ou flag fora desta lista (ex.: `--bare`) dá erro, sem fallback silencioso. `run` e `once` também existem, mas são do próprio serviço (o loop do container e uma rodada síncrona de debug) — o serviço já roda em loop, não chame no dia a dia.
 

@@ -185,3 +185,54 @@ def test_log_line_not_duplicated_on_replan():
     log2 = [o for o in m2.ops if o.path.startswith("wiki/log/")]
     body = (log2[0].after if log2 else s2.files[log_op.path][0]).decode("utf-8")
     assert body.count("r1 wiki:") == 1                       # nunca 2 linhas do mesmo item
+
+
+def _with_supersedes(page, old_text):
+    out = json.loads(json.dumps(OUT))
+    out["items"][0]["supersedes"] = [{"page": page, "old_text": old_text, "note": "dado novo"}]
+    return out
+
+
+def _snap_with(extra):
+    files = {"wiki/energia-e-recarga.md": (PAGE, "rev1"), "CLAUDE.md": (b"regra importante do vault\n", "r0")}
+    files.update(extra)
+    return Snap(files)
+
+
+def test_supersedes_marks_old_text_on_valid_page():
+    out = _with_supersedes("wiki/energia-e-recarga.md", "texto antigo")
+    m = plan_ops(out, snap(), ITEMS, Config(), "run1", "2026-09-11", {"inversor", "solar"})
+    assert m.per_item[1]["decision"] == "wiki"
+    page = [o for o in m.ops if o.path == "wiki/energia-e-recarga.md"][0]
+    assert b"~~texto antigo~~ (superado em 2026-09-11" in page.after
+
+
+@pytest.mark.parametrize("bad_page,extra", [
+    ("CLAUDE.md", {}),                                                            # fora de wiki/
+    ("wiki/2olhares.md", {"wiki/2olhares.md": (b"# hub\nregra importante do vault\n", "h1")}),   # hub
+    ("wiki/ferramentas-e-ideias.md", {"wiki/ferramentas-e-ideias.md": (b"regra importante do vault\n", "c1")}),  # catálogo
+    ("wiki/log/2026-09_curated.md", {"wiki/log/2026-09_curated.md": (b"regra importante do vault\n", "l1")}),     # log
+    ("wiki/nao-existe.md", {}),                                                   # fora do snapshot
+])
+def test_supersedes_refuses_protected_or_unknown_pages(bad_page, extra):
+    out = _with_supersedes(bad_page, "regra importante do vault")
+    m = plan_ops(out, _snap_with(extra), ITEMS, Config(), "run1", "2026-09-11", {"inversor", "solar"})
+    assert m.per_item[1]["decision"] == "retry"
+    assert not [o for o in m.ops if o.path == bad_page]
+
+
+@pytest.mark.parametrize("old_text", ["", "   ", "abc"])
+def test_supersedes_refuses_empty_or_short_old_text(old_text):
+    out = _with_supersedes("wiki/energia-e-recarga.md", old_text)
+    m = plan_ops(out, snap(), ITEMS, Config(), "run1", "2026-09-11", {"inversor", "solar"})
+    assert m.per_item[1]["decision"] == "retry"
+    assert not [o for o in m.ops if o.path == "wiki/energia-e-recarga.md"]
+
+
+def test_schema_constrains_supersedes_page_like_claims():
+    schema = json.loads((Path(__file__).parent.parent / "schema" / "distill.json").read_text())
+    item = schema["properties"]["items"]["items"]["properties"]
+    claim_page = item["claims"]["items"]["properties"]["page"]
+    sup = item["supersedes"]["items"]["properties"]
+    assert sup["page"].get("pattern") == claim_page["pattern"]
+    assert sup["old_text"].get("minLength", 0) >= 8
