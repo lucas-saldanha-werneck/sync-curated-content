@@ -1,0 +1,16 @@
+# Nada disto entra na imagem (COPY . /app)
+**/.git
+**/.git.*
+**/.venv
+**/.venv*
+**/__pycache__
+**/.pytest_cache
+**/.superpowers
+**/.DS_Store
+**/.env
+**/runs
+**/*.pyc
+PLAN*.md
+DESIGN.md
+tests
+.github

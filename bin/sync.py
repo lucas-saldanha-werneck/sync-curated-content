@@ -2,11 +2,11 @@
 """sync-raindrop — CLI. run|once|now|status|retry <id>|backfill|undo <run_id>"""
 from __future__ import annotations
 import argparse, json, os, shutil, signal, sys, time, traceback
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from lib.config import load_config
+from lib.config import load_config, REQUIRED as SECRET_ENV, OPTIONAL as OPTIONAL_ENV
 from lib.journal import Journal, _now as journal_now
 from lib.raindrop import RaindropClient
 from lib.dropbox_store import DropboxStore, RcloneTokenProvider, EnvTokenProvider
@@ -42,14 +42,29 @@ class App:
         self.bat = BatchDeps(cfg=cfg, store=self.store, records=self.records, raindrop=self.raindrop, journal=self.journal,
                              snapshot=Snapshot(self.store, cfg), undo_repo=UndoRepo(self.work / "wiki-git"), token=cfg.claude_oauth_token,
                              prompt_template=(SKILL / "prompts/distill.md").read_text(encoding="utf-8"), schema_path=SKILL / "schema/distill.json", triggers_vocab=vocab)
-        self.last_poll = None; self.heartbeat = None; self.auth_ok = None; self.first_pending = None
+        self.last_poll = None; self.heartbeat = None; self.auth_ok = None; self.first_pending = None; self.force = False
         self.proxy_url = env.get("YTDLP_PROXY") or os.environ.get("YTDLP_PROXY"); self.proxy_state = None   # (quando, (ok, info))
         self.public_dir = Path(env.get("HEALTH_PUBLIC_DIR", "/public/sync-raindrop"))
 
     def now(self): return datetime.now(timezone.utc).astimezone(ZoneInfo(self.cfg.tz))
 
+    def handle_requests(self):
+        """Pedidos do CLI (retry/recapture/undo/now). Cada um isolado: um pedido ruim não derruba o ciclo
+        nem apaga os outros (pop_requests já esvaziou a fila)."""
+        for req in self.journal.pop_requests():
+            try:
+                if req["cmd"] == "now": self.force = True
+                elif req["cmd"] == "retry": self.retry(int(req["arg"]))
+                elif req["cmd"] == "recapture": self.recapture(int(req["arg"]))
+                elif req["cmd"] == "undo": undo_run(req["arg"], self.store, self.journal, self.cfg, records=self.records)
+                else: print(f"pedido desconhecido ignorado: {req['cmd']}", file=sys.stderr, flush=True)
+            except Exception as e:
+                print(f"pedido {req['cmd']} {req.get('arg')!r} falhou: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+                self.journal.upsert_item(0, last_error=f"pedido {req['cmd']} {req.get('arg')!r}: {type(e).__name__}: {e}")
+
     def cycle(self, max_capture: int = 20) -> dict:
         cfg = self.cfg; out = {"captured": 0, "batches": 0}
+        self.handle_requests()              # no início: retry/recapture/now valem já nesta volta, não na seguinte
         recs = self.records.refresh()
         items = self.raindrop.list_all()
         self.last_poll = self.now()
@@ -62,10 +77,15 @@ class App:
             except Exception as e:
                 self.journal.upsert_item(it["id"], last_error=f"capture: {e}")
             shutil.rmtree(self.work / "capture" / f"r{it['id']}", ignore_errors=True)
+            self.beat(recs)                 # até 20 capturas de até fetch_timeout_s: sem batimento o health ficava velho
         recs = self.records.refresh()
         ready = [iid for iid, k in recs.items() if needs_distill(k)]
         if ready and self.first_pending is None: self.first_pending = self.now()
         if not ready: self.first_pending = None
+        if self.force:
+            # `now`: dispensa o mínimo de itens e a espera do lote (teto diário e trava continuam valendo)
+            self.force = False
+            if ready: self.first_pending = self.now() - timedelta(minutes=cfg.batch_max_wait_min)
         while ready and not STOP["flag"] and should_run(ready, self.first_pending, self.now(), cfg, self.journal.runs_today("distill", cfg.tz),
                                                             self.journal.consecutive_invalid("distill", breaker_since(self.boot, self.now()))):
             batch = sorted(ready)[: cfg.batch_max_items]
@@ -88,10 +108,6 @@ class App:
             self.first_pending = self.now() if ready else None
             self.beat(recs)                                    # backfill longo não pode deixar o health velho
             if res.get("status") in ("distill_invalid", "distill_conflict"): break
-        for req in self.journal.pop_requests():
-            if req["cmd"] == "retry": self.retry(int(req["arg"]))
-            elif req["cmd"] == "recapture": self.recapture(int(req["arg"]))
-            elif req["cmd"] == "undo": undo_run(req["arg"], self.store, self.journal, cfg)
         self.health(recs)
         return out
 
@@ -135,7 +151,8 @@ class App:
             lines = []
             for iid, kinds in sorted(recs.items()):
                 d = self.records.latest_distill(iid)
-                if not d: continue
+                # skip grava "catalog": null → sem linha no índice (o hook do Mac quebrava em triggers null)
+                if not d or not isinstance(d.get("catalog"), dict): continue
                 meta = self.records.read(iid, "meta") or {}
                 cat = d.get("catalog") or {}
                 lines.append(json.dumps({"id": iid, "type": cat.get("type"), "title": meta.get("title"),
@@ -172,8 +189,16 @@ class App:
             time.sleep(max(1, self.cfg.poll_seconds - (time.time() - t0)))
         return 0
 
+    def _may_distill(self, ready) -> bool:
+        """Mesmas travas do loop: teto diário de lotes e trava de lotes inválidos seguidos.
+        A espera do lote não vale aqui (o backfill chama em blocos de 5)."""
+        now = self.now()
+        return should_run(ready, now - timedelta(minutes=self.cfg.batch_max_wait_min), now, self.cfg,
+                          self.journal.runs_today("distill", self.cfg.tz),
+                          self.journal.consecutive_invalid("distill", breaker_since(self.boot, now)))
+
     def backfill(self, since: str | None, dry: bool, cont: bool):
-        items = self.raindrop.list_all(since_iso=since)
+        items = self.raindrop.list_all(since_iso=since, max_pages=None)     # sem teto de 2000 itens
         recs = self.records.refresh(); q, _ = pending(items, recs, 10**6)
         by_plat = {}
         for it in q: by_plat[it.get("domain", "")] = by_plat.get(it.get("domain", ""), 0) + 1
@@ -187,10 +212,26 @@ class App:
             done = 0
             for it in q:                                            # mais recentes primeiro
                 if STOP["flag"]: break
-                self.records.write(it["id"], "backfill", {}); capture_one(it, self.cap, self.work / "capture"); done += 1
+                self.records.write(it["id"], "backfill", {})
+                try:
+                    capture_one(it, self.cap, self.work / "capture")
+                except Exception as e:                              # um item ruim não derruba o backfill inteiro
+                    print(f"backfill: captura de r{it['id']} falhou: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+                    self.journal.upsert_item(it["id"], last_error=f"capture: {e}")
+                shutil.rmtree(self.work / "capture" / f"r{it['id']}", ignore_errors=True)
+                done += 1
                 if done % 5 == 0:
                     recs = self.records.refresh(); ready = [i for i, k in recs.items() if needs_distill(k)][: self.cfg.batch_max_items]
-                    if ready: run_batch(ready, self.bat, self.work / "distill")
+                    if ready and not self._may_distill(ready):
+                        print("backfill: teto diário de lotes ou trava de lotes inválidos atingido; parei. Rode de novo amanhã ou depois de corrigir a causa.")
+                        return 0
+                    if ready:
+                        try:
+                            res = run_batch(ready, self.bat, self.work / "distill")
+                            shutil.rmtree(self.work / "distill" / res["run_id"], ignore_errors=True)
+                        except Exception as e:
+                            print(f"backfill: lote {ready} falhou: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+                            for iid in ready: self.journal.upsert_item(iid, last_error=f"batch: {type(e).__name__}: {e}")
                 if done == 20 and not cont:
                     print("checkpoint: 20 itens. Leia a wiki e rode `backfill --all --continue` para seguir."); return 0
             return 0
@@ -203,14 +244,23 @@ def main(argv=None, env=None) -> int:
     ap.add_argument("arg", nargs="?"); ap.add_argument("--config", default=str(SKILL / "config.json"))
     ap.add_argument("--all", action="store_true"); ap.add_argument("--since"); ap.add_argument("--dry-run", action="store_true"); ap.add_argument("--continue", dest="cont", action="store_true")
     a = ap.parse_args(argv)
-    cfg = load_config(Path(a.config), env); app = App(cfg, env)
+    if a.cmd in ("retry", "recapture") and not (a.arg or "").isdigit():
+        ap.error(f"{a.cmd} precisa do id numérico do item do Raindrop (ex.: {a.cmd} 123456)")
+    if a.cmd == "undo" and not a.arg:
+        ap.error("undo precisa do run_id do lote (ex.: undo 20260911-031500-abc123)")
+    cfg = load_config(Path(a.config), env)
+    # segredos já estão no cfg: tira do ambiente do processo, senão todo filho (worker "spawn" do fetcher,
+    # yt-dlp, ffmpeg) nasceria com o .env inteiro no ambiente. Quem precisa de chave recebe por argumento/env explícito.
+    for k in (*SECRET_ENV, *OPTIONAL_ENV):
+        os.environ.pop(k, None)
+    app = App(cfg, env)
     if a.cmd == "run": return app.run()
     if a.cmd == "once": print(json.dumps(app.cycle(), ensure_ascii=False)); return 0
     if a.cmd == "now": app.journal.enqueue_request("now", None); print("pedido enfileirado"); return 0
     if a.cmd == "status": print((app.work / "status.md").read_text() if (app.work / "status.md").exists() else "sem status ainda"); return 0
     if a.cmd == "retry": app.journal.enqueue_request("retry", a.arg); print("retry enfileirado"); return 0
     if a.cmd == "recapture": app.journal.enqueue_request("recapture", a.arg); print("recaptura enfileirada"); return 0
-    if a.cmd == "undo": print(json.dumps(undo_run(a.arg, app.store, app.journal, cfg), ensure_ascii=False)); return 0
+    if a.cmd == "undo": print(json.dumps(undo_run(a.arg, app.store, app.journal, cfg, records=app.records), ensure_ascii=False)); return 0
     if a.cmd == "backfill": return app.backfill(None if a.all else a.since, a.dry_run, a.cont)
     return 1
 

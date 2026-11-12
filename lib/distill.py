@@ -1,6 +1,6 @@
 """Roda o claude -p em modo só-leitura sobre um workspace descartável e devolve o JSON validado pelo CLI."""
 from __future__ import annotations
-import json, os, pwd, shutil, subprocess
+import json, os, pwd, shutil, signal, subprocess
 from pathlib import Path
 from lib.snapshot import Snap
 
@@ -33,7 +33,7 @@ def _app_claude_pw():
         return None
 
 
-def _preexec_as_app_claude():
+def _preexec_as_app_claude(alarm_s: int | None = None):
     """preexec_fn: troca o processo filho para o uid/gid de app-claude quando ele existir.
 
     A checagem acontece dentro do callable (não na hora de montá-lo) porque o preexec_fn
@@ -41,6 +41,10 @@ def _preexec_as_app_claude():
     (o runner é injetado), então a ausência de app-claude nunca derruba os testes.
     """
     def _switch():
+        if alarm_s:
+            # sem o `timeout` no PATH: o alarme sobrevive à troca de uid e ao exec, e o SIGALRM (ação padrão)
+            # encerra o claude mesmo quando o pai (app, sem CAP_KILL) não consegue matá-lo
+            signal.alarm(int(alarm_s))
         # falha alta: se app-claude existe (produção) e a troca falhar, o claude NÃO roda (review Opus M2)
         from lib.privs import drop_to
         drop_to("app-claude")
@@ -95,6 +99,7 @@ def build_workspace(ws: Path, snap: Snap, raws: dict[str, bytes], frames: dict[s
     return ws
 
 
+TIMEOUT_KILL_AFTER_S = 10
 CREDITO_BIN = "claude-credito"
 CREDITO_STATE = "/tmp/claude-credito"   # pausa de 6 h e registro; /tmp é o tmpfs gravável do container
 
@@ -131,11 +136,21 @@ def run_claude(ws: Path, cfg, token: str, prompt: str, schema_path: Path, runner
         env.update(CLAUDE_CREDITO_KEY=cfg.claude_credit_api_key, CLAUDE_CREDITO_KEYCHAIN="off",
                    CLAUDE_CREDITO_REAL=shutil.which("claude", path=env["PATH"]) or "claude",
                    CLAUDE_CREDITO_STATE=CREDITO_STATE, CLAUDE_CREDITO_LOG=f"{CREDITO_STATE}/claude-credito.log")
+    # O claude roda como app-claude e o pai (app, sem CAP_KILL) não consegue matá-lo: o timeout do
+    # subprocess.run deixava o processo (e o claude real, neto do claude-credito) órfão. O `timeout` do coreutils
+    # roda JÁ como app-claude, num grupo de processos próprio, e no prazo sinaliza o grupo inteiro (TERM, depois KILL).
+    cmd = claude_cmd(cfg, schema_path, prompt)
+    tbin = shutil.which("timeout", path=env["PATH"])
+    if tbin:
+        cmd = [tbin, f"--kill-after={TIMEOUT_KILL_AFTER_S}", f"{int(cfg.claude_timeout_s)}s", *cmd]
+    backstop = cfg.claude_timeout_s + TIMEOUT_KILL_AFTER_S + 20       # só se o próprio `timeout` travar
     try:
-        p = runner(claude_cmd(cfg, schema_path, prompt), cwd=str(ws), env=env, capture_output=True, text=True,
-                   timeout=cfg.claude_timeout_s, preexec_fn=_preexec_as_app_claude())
-    except subprocess.TimeoutExpired as e:
+        p = runner(cmd, cwd=str(ws), env=env, capture_output=True, text=True, timeout=backstop,
+                   preexec_fn=_preexec_as_app_claude(None if tbin else cfg.claude_timeout_s))
+    except (subprocess.TimeoutExpired, PermissionError) as e:        # PermissionError: kill() do pai levou EPERM
         raise DistillError(f"claude timeout {cfg.claude_timeout_s}s") from e
+    if (tbin and p.returncode in (124, 137)) or p.returncode == -signal.SIGALRM:
+        raise DistillError(f"claude timeout {cfg.claude_timeout_s}s (rc={p.returncode})")
     if p.returncode != 0:
         raise DistillError(f"claude rc={p.returncode}: {(p.stderr or p.stdout)[-800:]}")
     try:

@@ -13,3 +13,32 @@ jobs:
           python-version: "3.12"
       - run: pip install pytest pyyaml requests trafilatura dropbox
       - run: python -m pytest -q
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y zsh
+      - name: hook do Mac (curated-suggest.sh)
+        run: bash tests/test_hook.sh
+      - name: scripts do host (egress, health-stale, teto)
+        run: bash tests/test_host.sh
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: imagem constrói com as versões fixas
+        run: docker build -t sync-raindrop:ci .
+      - name: binários e bgutil dentro da imagem
+        run: |
+          docker run --rm --entrypoint sh sync-raindrop:ci -c '
+            set -e
+            claude --version
+            rclone version | head -1
+            deno --version | head -1
+            yt-dlp --version
+            test -f /opt/bgutil/server/build/main.js
+            timeout --version | head -1
+            id app-fetch && id app-claude
+            python3 -c "import sys; sys.path.insert(0, \"/app\"); import lib.fetcher, lib.distill, lib.applier"
+            test ! -e /app/tests && test ! -e /app/.git
+          '

@@ -7,6 +7,22 @@ chown app:app /var/lib/sync-raindrop /public/sync-raindrop /tmp/work
 
 tinyproxy -c /etc/tinyproxy/tinyproxy.conf
 
+# PO-token provider do yt-dlp (bgutil) — opcional. Sobe só se o build existir na imagem.
+# Sobe ANTES de ler os segredos e já como app-fetch, com ambiente limpo: é código de terceiro e não precisa
+# de nenhuma chave (antes rodava como root com o .env inteiro no ambiente).
+BGUTIL_MAIN=""
+for f in /opt/bgutil/server/build/main.js /opt/bgutil/build/main.js; do
+  [ -f "$f" ] && BGUTIL_MAIN="$f" && break
+done
+if [ -n "$BGUTIL_MAIN" ]; then
+  ( cd "$(dirname "$BGUTIL_MAIN")/.." && setpriv --reuid app-fetch --regid app-fetch --clear-groups \
+      env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp TZ="${TZ:-UTC}" \
+      node "$BGUTIL_MAIN" --port 4416 --host 127.0.0.1 & )
+  export YTDLP_POT_URL=http://127.0.0.1:4416
+else
+  echo "bgutil PO-token provider ausente — YTDLP_POT_URL não definido" >&2
+fi
+
 # Segredos: só lidos aqui (como root, antes de trocar para o uid app) e passados
 # como ambiente do subprocesso; nada fica gravado em disco além do /secrets/.env
 # montado read-only pelo compose.
@@ -14,18 +30,6 @@ set -a
 # shellcheck disable=SC1091
 . /secrets/.env
 set +a
-
-# PO-token provider do yt-dlp (bgutil) — opcional. Sobe só se o build existir na imagem.
-BGUTIL_MAIN=""
-for f in /opt/bgutil/server/build/main.js /opt/bgutil/build/main.js; do
-  [ -f "$f" ] && BGUTIL_MAIN="$f" && break
-done
-if [ -n "$BGUTIL_MAIN" ]; then
-  ( cd "$(dirname "$BGUTIL_MAIN")/.." && node "$BGUTIL_MAIN" --port 4416 --host 127.0.0.1 & )
-  export YTDLP_POT_URL=http://127.0.0.1:4416
-else
-  echo "bgutil PO-token provider ausente — YTDLP_POT_URL não definido" >&2
-fi
 
 # Orquestrador como `app` MAS com CAP_SETUID/CAP_SETGID ambientes: é o que permite os subprocessos caírem para
 # app-claude / app-fetch (lib/privs.drop_to zera as capabilities no filho). `gosu` limpava as caps na transição

@@ -1,0 +1,13 @@
+# rsync --exclude-from do deploy.sh: nada disto vai para a VPS (padrões do rsync, não do git)
+.git
+.git.*
+.venv
+.venv*
+__pycache__
+.pytest_cache
+.superpowers
+.DS_Store
+.env
+runs/
+PLAN*.md
+DESIGN.md

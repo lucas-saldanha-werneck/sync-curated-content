@@ -14,8 +14,8 @@ def strip_markers(text: str, item_ids: list[int]) -> str:
         text = re.sub(rf"^- \d{{4}}-\d{{2}}-\d{{2}} r{iid} .*$\n?", "", text, flags=re.MULTILINE)
     return text
 
-def undo_run(run_id: str, store, journal, cfg) -> dict:
-    res = {"reverted": [], "skipped": [], "unchanged": []}
+def undo_run(run_id: str, store, journal, cfg, records=None) -> dict:
+    res = {"reverted": [], "skipped": [], "unchanged": [], "undone": []}
     urun = journal.start_run("undo", [])
 
     # Group ops by path
@@ -55,6 +55,18 @@ def undo_run(run_id: str, store, journal, cfg) -> dict:
             oid = journal.add_op(urun, op["item_id"], path, "undo", last_rev, "")
             journal.confirm_op(oid, rev)
         res["reverted"].append(path)
+
+    # registra o undo por item: sem isso o próximo lote regera o catálogo a partir do registro distill
+    # e o item desfeito volta (records.catalog_entries)
+    undone_ids = sorted({op["item_id"] for path in res["reverted"] for op in ops_by_path[path] if op["item_id"]})
+    if undone_ids:
+        if records is None:
+            from lib.records import Records
+            records = Records(store, cfg)
+        records.refresh()
+        for iid in undone_ids:
+            if records.mark_undone(iid, run_id):
+                res["undone"].append(iid)
 
     journal.finish_run(urun, "ok", res)
     return res

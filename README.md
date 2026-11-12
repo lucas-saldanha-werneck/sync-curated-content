@@ -45,7 +45,7 @@ Tudo abaixo já foi configurado. Fica registrado aqui para quando precisar troca
 App "sync-raindrop" criado no Raindrop, token de teste (Test token) gerado e já colocado no `.env` da VPS. Nada a fazer.
 
 ### Dropbox — feito
-Não criamos um app Dropbox próprio. O serviço usa a configuração `rclone` que já existe na VPS, copiada para `/opt/sync-raindrop/rclone/rclone.conf` (pasta própria, dona `app`, montada no container como `/secrets/rclone`). O `rclone` renova o token do Dropbox sozinho a cada 4 h e **regrava o arquivo** — por isso a pasta inteira é montada, nunca só o arquivo. Nada a fazer.
+Não criamos um app Dropbox próprio. O serviço usa a configuração `rclone` que já existe na VPS, mas só o remote `[dropbox]` dela (o `deploy.sh` grava esse remote, e nenhum outro, em `/opt/sync-raindrop/rclone/rclone.conf` com `host/rclone_only_remote.py`) (pasta própria, dona `app`, montada no container como `/secrets/rclone`). O `rclone` renova o token do Dropbox sozinho a cada 4 h e **regrava o arquivo** — por isso a pasta inteira é montada, nunca só o arquivo. Nada a fazer.
 
 ### UptimeRobot — feito
 Monitor do tipo KEYWORD, apontando para `https://files.2olhares.com/sync-raindrop/health.json`, avisa se o serviço parar de responder.
