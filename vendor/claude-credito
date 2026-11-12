@@ -17,8 +17,11 @@
 #   1. No -p/--print, CLAUDE_CREDITO=off, or ANTHROPIC_API_KEY already set by the caller -> plain claude.
 #   2. Paused (the API refused less than CLAUDE_CREDITO_PAUSE_S ago, default 6 h) -> subscription.
 #   3. No key stored -> subscription.
-#   4. Otherwise it runs with the key. A short reply with "Credit balance is too low", "Invalid API key"
-#      or another billing/key error -> it starts the pause and runs the call again on the subscription.
+#   4. Otherwise it runs with the key. If the API refuses it ("Credit balance is too low", "Invalid API key"
+#      or another billing/key error, read from claude's error channel, not from the answer), it starts the
+#      pause. It runs the call again on the subscription only when it can prove no turn ran (no tool could
+#      have acted): text output -> the session transcript of the call has no real assistant message;
+#      json/stream-json -> the result has "modelUsage":{}. Otherwise it returns the error as it came.
 #
 # Settings: environment variables, or KEY=VALUE lines in ~/.config/claude-credito/config (the environment wins).
 #   CLAUDE_CREDITO=off            never use the API
@@ -32,7 +35,7 @@
 # PATH shim for scripts that call a bare `claude`: ~/.local/share/claude-credito/shim (see the README).
 
 set -u
-VERSION="0.1.2"
+VERSION="0.1.5"
 SELF="${BASH_SOURCE[0]}"
 CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/claude-credito"
 CONFIG="${CLAUDE_CREDITO_CONFIG:-$CONF_DIR/config}"
@@ -106,7 +109,7 @@ paused() {
 
 case "${1:-}" in
   --credit-help)
-    sed -n '2,31p' "$SELF" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    sed -n '2,34p' "$SELF" | sed 's/^# \{0,1\}//'; exit 0 ;;
   --credit-version)
     echo "claude-credito $VERSION"; exit 0 ;;
   --credit-status|--credito-status)
@@ -171,18 +174,66 @@ trap 'rm -rf "$T"' EXIT
 IN=/dev/null
 if [[ ! -t 0 ]]; then cat > "$T/in"; IN="$T/in"; fi
 
-rc=0
-ANTHROPIC_API_KEY="$KEY" "$REAL" "$@" < "$IN" > "$T/out" 2> "$T/err" || rc=$?
+# Output format, and whether the caller manages the session itself (then no session id of our own).
+fmt=text; prev=""; own_session=0
+for a in "$@"; do
+  [[ "$prev" == "--output-format" ]] && fmt="$a"
+  case "$a" in
+    --output-format=*) fmt="${a#*=}" ;;
+    -c|-r|--continue|--resume|--resume=*|--session-id|--session-id=*|--fork-session|--no-session-persistence|\
+    --from-pr|--from-pr=*|--teleport|--teleport=*) own_session=1 ;;
+  esac
+  prev="$a"
+done
+# Text output says nothing about turns, so a text call gets its own session id: its transcript shows
+# whether the model ever answered (and so whether a tool could have run). stdout is unchanged.
+SID=""
+if [[ "$fmt" != json && "$fmt" != stream-json ]] && (( ! own_session )); then
+  SID="$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null)"
+  SID="$(printf '%s' "$SID" | tr 'A-F' 'a-f')"
+  [[ "$SID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || SID=""
+fi
 
-size=$(( $(wc -c < "$T/out") + $(wc -c < "$T/err") ))
-if (( size < 6000 )) && grep -qhE "$REFUSED_RE" "$T/out" "$T/err" 2>/dev/null; then
-  why="$(grep -ohE "$REFUSED_RE" "$T/out" "$T/err" | head -n 1)"
+rc=0
+ANTHROPIC_API_KEY="$KEY" "$REAL" ${SID:+--session-id} ${SID:+"$SID"} "$@" < "$IN" > "$T/out" 2> "$T/err" || rc=$?
+
+# Did the API refuse (why), and is it proven that no turn ran (proven=1)?
+why=""; proven=0; known=0
+if [[ "$fmt" == json || "$fmt" == stream-json ]]; then
+  res="$(grep -h '"type":"result"' "$T/out" 2>/dev/null | tail -n 1)"
+  if [[ -n "$res" ]]; then
+    known=1
+    [[ "$res" == *'"is_error":true'* ]] && why="$(printf '%s\n' "$res" | grep -oE "$REFUSED_RE" | head -n 1)"
+    # modelUsage {} = no API request ever succeeded, so the model never answered and no tool ran
+    [[ -n "$why" && "$res" == *'"modelUsage":{}'* ]] && proven=1
+  fi
+elif [[ -n "$SID" ]]; then
+  tf=""
+  for f in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/*/"$SID".jsonl; do [[ -f "$f" ]] && { tf="$f"; break; }; done
+  if [[ -n "$tf" ]]; then
+    known=1
+    # claude's own API error is a "<synthetic>" assistant line with "isApiErrorMessage":true
+    why="$(grep -h '"isApiErrorMessage":true' "$tf" | tail -n 1 | grep -oE "$REFUSED_RE" | head -n 1)"
+    if [[ -n "$why" ]] && ! grep -h '"type":"assistant"' "$tf" | grep -vq '"model":"<synthetic>"'; then proven=1; fi
+  fi
+fi
+if (( ! known )) && (( rc != 0 )); then
+  # no structured answer (caller's own session, no transcript): a short failed reply with a refusal
+  # text only pauses the API; the call is not repeated
+  size=$(( $(wc -c < "$T/out") + $(wc -c < "$T/err") ))
+  (( size < 6000 )) && why="$(grep -ohE "$REFUSED_RE" "$T/out" "$T/err" 2>/dev/null | head -n 1)"
+fi
+
+if [[ -n "$why" ]]; then
   mkdir -p "$STATE" 2>/dev/null; : > "$PAUSE"
-  log "API REFUSED ($why, rc=$rc); the same call goes to the subscription; API paused ${PAUSE_S}s"
-  rc=0
-  "$REAL" "$@" < "$IN" || rc=$?
-  log "subscription rc=$rc"
-  exit "$rc"
+  if (( proven )); then
+    log "API REFUSED ($why, rc=$rc); the same call goes to the subscription; API paused ${PAUSE_S}s"
+    rc=0
+    "$REAL" "$@" < "$IN" || rc=$?
+    log "subscription rc=$rc"
+    exit "$rc"
+  fi
+  log "API REFUSED ($why, rc=$rc); not repeated (no proof that no turn ran: it may have acted); API paused ${PAUSE_S}s"
 fi
 
 # The "connectors are disabled because ANTHROPIC_API_KEY..." notice is not part of the answer.
