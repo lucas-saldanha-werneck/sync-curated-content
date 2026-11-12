@@ -179,16 +179,23 @@ class App:
         for it in q: by_plat[it.get("domain", "")] = by_plat.get(it.get("domain", ""), 0) + 1
         print(f"pendentes: {len(q)}; por domínio: {json.dumps(by_plat, ensure_ascii=False)}")
         if dry: return 0
-        done = 0
-        for it in q:                                            # mais recentes primeiro
-            if STOP["flag"]: break
-            self.records.write(it["id"], "backfill", {}); capture_one(it, self.cap, self.work / "capture"); done += 1
-            if done % 5 == 0:
-                recs = self.records.refresh(); ready = [i for i, k in recs.items() if needs_distill(k)][: self.cfg.batch_max_items]
-                if ready: run_batch(ready, self.bat, self.work / "distill")
-            if done == 20 and not cont:
-                print("checkpoint: 20 itens. Leia a wiki e rode `backfill --all --continue` para seguir."); return 0
-        return 0
+        # grava no vault como o loop: precisa do MESMO lock do run(), senão os dois escrevem ao mesmo tempo
+        if not self.journal.acquire_lock():
+            print("backfill: o lock está com outra instância (o serviço em loop?). Pare o serviço antes de rodar o backfill.")
+            return 2
+        try:
+            done = 0
+            for it in q:                                            # mais recentes primeiro
+                if STOP["flag"]: break
+                self.records.write(it["id"], "backfill", {}); capture_one(it, self.cap, self.work / "capture"); done += 1
+                if done % 5 == 0:
+                    recs = self.records.refresh(); ready = [i for i, k in recs.items() if needs_distill(k)][: self.cfg.batch_max_items]
+                    if ready: run_batch(ready, self.bat, self.work / "distill")
+                if done == 20 and not cont:
+                    print("checkpoint: 20 itens. Leia a wiki e rode `backfill --all --continue` para seguir."); return 0
+            return 0
+        finally:
+            self.journal.release_lock()
 
 def main(argv=None, env=None) -> int:
     env = dict(os.environ if env is None else env)

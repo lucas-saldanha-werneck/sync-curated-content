@@ -11,6 +11,8 @@ from lib.snapshot import Snap
 class LimitError(Exception): ...
 
 HUBS = {"wiki/2olhares.md", "wiki/luxvolt.md", "wiki/pessoal.md"}
+WIKI_PAGE_RE = re.compile(r"^wiki/[a-z0-9-]+\.md$")   # mesmo `pattern` de claims[].page/supersedes[].page no schema
+MIN_OLD_TEXT = 8                                       # old_text vazio/curto casaria em qualquer lugar (vazio = topo do arquivo)
 
 
 @dataclass
@@ -185,6 +187,12 @@ def plan_ops(output: dict, snap: Snap, items: dict, cfg, run_id: str, today: str
 
                 for sp in it.get("supersedes", []):
                     page = sp["page"]
+                    # mesma barreira dos claims, mais catálogo e logs: o modelo não pode riscar CLAUDE.md, hubs ou logs
+                    if (not isinstance(page, str) or not WIKI_PAGE_RE.match(page) or page in HUBS
+                            or page == cfg.catalog_page or page.startswith("wiki/log/") or page not in files):
+                        raise GrammarError(f"supersedes: página inválida: {page}")
+                    if not isinstance(sp["old_text"], str) or len(sp["old_text"].strip()) < MIN_OLD_TEXT:
+                        raise GrammarError(f"supersedes: old_text vazio ou curto demais em {page}")
                     base = item_files[page] if page in item_files else files.get(page)
                     if base is not None and sp["old_text"] in base.decode("utf-8"):
                         note = validate_text(sp["note"], 200, pages_allowed)

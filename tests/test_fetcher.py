@@ -148,3 +148,44 @@ def test_fetch_work_dir_sem_app_fetch_fica_privado(tmp_path, monkeypatch):
     fetch({"id": 2, "link": "https://blog.com/y", "type": "article"}, work, Config(), {}, None,
           fns={"article": lambda *a, **k: FetchResult(platform="article", text="t", method="trafilatura")}, isolate=False)
     assert work.stat().st_mode & 0o777 == 0o700
+
+
+def test_child_kills_itself_when_parent_cannot(tmp_path, monkeypatch):
+    """Produção: o pai roda como `app` sem CAP_KILL e o filho já caiu para `app-fetch`, então o
+    killpg/p.kill() do pai levam EPERM. O próprio filho precisa se matar (com os netos) no prazo."""
+    import multiprocessing.process as mpp
+    import os as _os
+    import subprocess
+    import time
+    from lib import fetcher
+    pidfile = tmp_path / "sleeper.pid"
+    parent = _os.getpid()
+    real_killpg = _os.killpg
+
+    def killpg_eperm_in_parent(pgid, sig):
+        if _os.getpid() == parent:
+            raise PermissionError(1, "Operation not permitted")
+        return real_killpg(pgid, sig)
+
+    monkeypatch.setattr(fetcher.os, "killpg", killpg_eperm_in_parent)
+    monkeypatch.setattr(mpp.BaseProcess, "kill", lambda self: None)     # p.kill() também "falha"
+
+    def fake_video_fetch(url, work, cfg, groq_key, platform, **kwargs):
+        p = subprocess.Popen(["sleep", "30"])
+        pidfile.write_text(str(p.pid))
+        p.wait()                                                         # yt-dlp/ffmpeg travado
+        return FetchResult(platform=platform, method="none")
+
+    item = {"id": 1, "link": "https://youtu.be/x", "type": "video", "title": "", "tags": []}
+    r = fetch(item, tmp_path, Config(fetch_timeout_s=1), {}, journal=None, fns={"video": fake_video_fetch}, isolate=True)
+    assert r.method == "none" and "timeout" in r.error
+    sleeper_pid = int(pidfile.read_text())
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            _os.kill(sleeper_pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.2)
+    _os.kill(sleeper_pid, 9)
+    pytest.fail("neto travado continuou vivo: o filho não se limitou sozinho")

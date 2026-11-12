@@ -20,6 +20,6 @@
                        "when": {"type": "string", "maxLength": 200}, "triggers": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 40}},
                        "implement": {"type": "boolean"}}},
       "supersedes": {"type": "array", "maxItems": 3, "items": {"type": "object", "additionalProperties": false, "required": ["page", "old_text", "note"],
-        "properties": {"page": {"type": "string"}, "old_text": {"type": "string", "maxLength": 400}, "note": {"type": "string", "maxLength": 200}}}}
+        "properties": {"page": {"type": "string", "pattern": "^wiki/[a-z0-9-]+\\.md$"}, "old_text": {"type": "string", "minLength": 8, "maxLength": 400}, "note": {"type": "string", "maxLength": 200}}}}
     }}}}
 }

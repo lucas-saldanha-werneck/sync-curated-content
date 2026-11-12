@@ -42,11 +42,31 @@ def _drop_privileges():
     drop_to("app-fetch")
     os.umask(0o007)                     # o que o fetcher criar fica gravável pelo grupo → app limpa depois
 
-def _worker(q, fn, args, kwargs, env):
+SELF_KILL_GRACE_S = 1
+
+
+def _arm_self_kill(timeout_s: int) -> None:
+    """O filho se limita sozinho: em produção o pai (`app`, sem CAP_KILL) não consegue matar um filho que já
+    caiu para `app-fetch` (killpg/kill dão EPERM). Ao fim do prazo o próprio worker manda SIGKILL ao SEU grupo
+    (ele + netos yt-dlp/ffmpeg, todos app-fetch). O alarme sobrevive à troca de uid. Só mata o grupo se for o
+    líder (setsid deu certo); senão mata só a si mesmo, para nunca atingir o grupo do pai."""
+    def _on_alarm(_sig, _frm):
+        try:
+            if os.getpgrp() == os.getpid():
+                os.killpg(os.getpid(), signal.SIGKILL)
+        finally:
+            os.kill(os.getpid(), signal.SIGKILL)
+    signal.signal(signal.SIGALRM, _on_alarm)
+    signal.alarm(max(1, int(timeout_s)) + SELF_KILL_GRACE_S)
+
+
+def _worker(q, fn, args, kwargs, env, timeout_s=None):
     try:
         os.setsid()                                  # líder do grupo: killpg mata netos (yt-dlp/ffmpeg) também
     except OSError:
         pass
+    if timeout_s:
+        _arm_self_kill(timeout_s)                    # antes da queda de privilégio
     os.environ.clear(); os.environ.update(env); _drop_privileges()
     try:
         q.put(("ok", fn(*args, **kwargs)))
@@ -55,7 +75,7 @@ def _worker(q, fn, args, kwargs, env):
 
 def _run_isolated(fn, args, kwargs, timeout_s: int, env: dict):
     ctx = mp.get_context("fork"); q = ctx.Queue()
-    p = ctx.Process(target=_worker, args=(q, fn, args, kwargs, env)); p.start()
+    p = ctx.Process(target=_worker, args=(q, fn, args, kwargs, env, timeout_s)); p.start()
     try:
         deadline = time.monotonic() + timeout_s
         while True:
