@@ -1,18 +1,42 @@
 """Roteia a URL para o fetcher certo e roda isolado (processo filho, uid app-fetch, timeout)."""
 from __future__ import annotations
-import multiprocessing as mp, os, pwd, queue, re, signal, sys, time
+import dataclasses, multiprocessing as mp, os, pwd, queue, re, signal, sys, time, urllib.parse
 from pathlib import Path
 from lib.fetch_types import FetchResult
+from lib.net_guard import check_url
+
+# o worker isolado recebe uma cópia do cfg SEM estes campos (cada fetcher recebe só a chave de que precisa, por argumento)
+SECRET_FIELDS = ("raindrop_token", "dropbox_refresh_token", "dropbox_app_key", "dropbox_app_secret", "groq_api_key",
+                 "claude_oauth_token", "apify_token", "jina_api_key", "firecrawl_api_key", "uptimerobot_url",
+                 "claude_credit_api_key")
+
+
+def _host_is(host: str, *domains: str) -> bool:
+    return any(host == d or host.endswith("." + d) for d in domains)
+
 
 def route(url: str, rtype: str) -> str:
-    u = url.lower()
-    if re.search(r"(youtube\.com|youtu\.be)", u): return "youtube"
-    if "tiktok.com" in u: return "tiktok"
-    if "instagram.com" in u: return "instagram"
-    if "linkedin.com" in u: return "linkedin"
-    if re.search(r"^https?://(www\.|mobile\.)?(x|twitter)\.com/", u): return "x"
-    if u.split("?")[0].endswith(".pdf") or rtype == "document": return "pdf"
+    """Roteia pelo HOSTNAME (não pelo texto da URL inteira): `https://evil/?q=youtube.com` não vai ao yt-dlp."""
+    u = url.strip()
+    try:
+        host = (urllib.parse.urlsplit(u).hostname or "").lower().rstrip(".")
+    except ValueError:
+        host = ""
+    if _host_is(host, "youtube.com", "youtu.be", "youtube-nocookie.com"): return "youtube"
+    if _host_is(host, "tiktok.com"): return "tiktok"
+    if _host_is(host, "instagram.com"): return "instagram"
+    if _host_is(host, "linkedin.com"): return "linkedin"
+    if host in ("x.com", "www.x.com", "mobile.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com"): return "x"
+    if u.lower().split("?")[0].endswith(".pdf") or rtype == "document": return "pdf"
     return "article"
+
+
+def public_cfg(cfg):
+    """Cópia do cfg sem segredos, para o processo isolado (que faz parse de conteúdo hostil)."""
+    if not dataclasses.is_dataclass(cfg):
+        return cfg
+    blank = {f.name: (None if f.default is None else "") for f in dataclasses.fields(cfg) if f.name in SECRET_FIELDS}
+    return dataclasses.replace(cfg, **blank)
 
 def _app_fetch_pw():
     try:
@@ -74,7 +98,10 @@ def _worker(q, fn, args, kwargs, env, timeout_s=None):
         q.put(("err", f"{type(e).__name__}: {e}"))
 
 def _run_isolated(fn, args, kwargs, timeout_s: int, env: dict):
-    ctx = mp.get_context("fork"); q = ctx.Queue()
+    # "spawn", não "fork": o filho é um interpretador novo e não herda a memória do orquestrador (tokens em
+    # objetos Python). Só recebe o que vai em `args` (cfg sem segredos + a chave daquele fetcher). Exige `fn`
+    # e argumentos serializáveis (funções de módulo, não lambdas).
+    ctx = mp.get_context("spawn"); q = ctx.Queue()
     p = ctx.Process(target=_worker, args=(q, fn, args, kwargs, env, timeout_s)); p.start()
     try:
         deadline = time.monotonic() + timeout_s
@@ -118,6 +145,13 @@ def fetch(item: dict, work: Path, cfg, secrets: dict, journal, fns: dict | None 
     f = {"video": fetch_video, "article": fetch_article, "pdf": fetch_pdf, "instagram": fetch_instagram,
          "linkedin": fetch_linkedin, "x": fetch_x, **(fns or {})}
     plat = route(item["link"], item.get("type", "link"))
+    if plat in ("youtube", "tiktok"):
+        # o yt-dlp não passa pelo safe_open: mesma guarda anti-SSRF antes de entregar a URL a ele
+        try:
+            check_url(item["link"])
+        except Exception as e:
+            return FetchResult(platform=plat, method="none", error=f"url bloqueada: {e}")
+    cfg = public_cfg(cfg)
     work = Path(work); work.mkdir(parents=True, exist_ok=True); _hand_work_dir_to_app_fetch(work)
     env = {"PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"), "TZ": cfg.tz, "HOME": str(work)}
     if os.environ.get("YTDLP_PROXY"): env["YTDLP_PROXY"] = os.environ["YTDLP_PROXY"]
@@ -127,7 +161,7 @@ def fetch(item: dict, work: Path, cfg, secrets: dict, journal, fns: dict | None 
     if plat in ("youtube", "tiktok"):
         call = (f["video"], (item["link"], work, cfg, groq, plat), {"groq_seconds_used_today": used, "apify_token": secrets.get("apify")})
     elif plat == "instagram":
-        call = (f["instagram"], (item["link"], work, cfg, secrets.get("apify"), groq), {})
+        call = (f["instagram"], (item["link"], work, cfg, secrets.get("apify"), groq), {"groq_seconds_used_today": used})
     elif plat == "linkedin":
         call = (f["linkedin"], (item["link"], cfg, secrets.get("apify")), {})
     elif plat == "x":
@@ -148,7 +182,14 @@ def fetch(item: dict, work: Path, cfg, secrets: dict, journal, fns: dict | None 
         return FetchResult(platform=plat, method="none", error=str(res))
     if plat == "x" and res.method != "none" and res.extra.get("video_url"):
         vargs = (res.extra["video_url"], work / "xvid", cfg, groq, "x")
-        if isolate:
+        try:
+            check_url(res.extra["video_url"])
+            vblocked = None
+        except Exception as e:
+            vblocked = f"url bloqueada: {e}"
+        if vblocked:
+            v = vblocked
+        elif isolate:
             v = _run_isolated(f["video"], vargs, {"groq_seconds_used_today": used}, cfg.fetch_timeout_s, env)
         else:
             try:
@@ -162,5 +203,8 @@ def fetch(item: dict, work: Path, cfg, secrets: dict, journal, fns: dict | None 
             if journal and v.method == "groq" and v.duration_s:
                 journal.add_groq_seconds(int(v.duration_s))
     if journal and res.method == "groq" and res.duration_s:
+        journal.add_groq_seconds(int(res.duration_s))
+    # Instagram: o resultado é "apify", mas a transcrição do vídeo pode ter gasto Groq — entra no teto diário
+    if journal and plat == "instagram" and res.extra.get("video_method") == "groq" and res.duration_s:
         journal.add_groq_seconds(int(res.duration_s))
     return res

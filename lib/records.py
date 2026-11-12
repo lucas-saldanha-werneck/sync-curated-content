@@ -11,7 +11,9 @@ NAME_RE = re.compile(r"/r(\d+)\.([a-z0-9]+)\.json$")
 # a partir daí, os kinds de destilação/decisão da geração N chamam-se distillN / wikiN / parcialN / skipN / erroN.
 # `nowiki` (opt-out do usuário) não tem geração. Geração 0 = nomes sem sufixo (compatível com o histórico).
 GEN_KINDS = ("captured", "distill", "wiki", "parcial", "skip", "erro")
-GEN_RE = re.compile(r"^(captured|distill|wiki|parcial|skip|erro|redo|recap)(\d+)$")
+GEN_RE = re.compile(r"^(captured|distill|wiki|parcial|skip|erro|redo|recap|undone)(\d+)$")
+# `undoneN` = o lote da geração N foi desfeito (undo): o item segue terminal (não volta para a fila sozinho),
+# mas sai do catálogo e do índice do hook até um `retry` abrir a geração N+1.
 
 def generation(kinds: set[str]) -> int:
     """Gerações são abertas por `redoN` (só re-destilar) ou `recapN` (refazer captura E destilação)."""
@@ -25,6 +27,10 @@ def gen_kind(kind: str, kinds: set[str]) -> str:
 
 def has_distill(kinds: set[str]) -> bool:
     return gen_kind("distill", kinds) in kinds
+
+
+def is_undone(kinds: set[str]) -> bool:
+    return f"undone{generation(kinds)}" in kinds
 
 
 def needs_recapture(kinds: set[str]) -> bool:
@@ -103,7 +109,18 @@ class Records:
     def latest_distill(self, item_id: int) -> dict | None:
         """Registro distill da geração atual (None se o item foi reaberto por redo e ainda não re-destilou)."""
         kinds = self.kinds(item_id)
-        return self.read(item_id, gen_kind("distill", kinds)) if has_distill(kinds) else None
+        if not has_distill(kinds) or is_undone(kinds):
+            return None                     # desfeito: não volta ao catálogo no lote seguinte
+        return self.read(item_id, gen_kind("distill", kinds))
+
+    def mark_undone(self, item_id: int, run_id: str) -> str | None:
+        """Undo de um lote: grava `undoneN` (geração atual) para o catálogo não regerar a linha do item."""
+        kinds = self.kinds(item_id)
+        if not has_distill(kinds) or is_undone(kinds):
+            return None
+        kind = f"undone{generation(kinds)}"
+        self.write(item_id, kind, {"run_id": run_id})
+        return kind
 
     def catalog_entries(self) -> list[dict]:
         out = []

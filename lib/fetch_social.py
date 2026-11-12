@@ -3,7 +3,7 @@ from __future__ import annotations
 import json, re, urllib.parse, urllib.request
 from pathlib import Path
 from lib.fetch_types import FetchResult
-from lib.net_guard import safe_open
+from lib.net_guard import check_url, safe_open
 
 APIFY = "https://api.apify.com/v2/acts/{actor}/run-sync-get-dataset-items?token={token}&timeout={t}"
 
@@ -16,7 +16,8 @@ def apify_run_sync(actor: str, token: str, payload: dict, opener=None, timeout: 
     with urllib.request.urlopen(req, timeout=timeout + 30) as r:
         return json.loads(r.read().decode("utf-8", "ignore"))
 
-def fetch_instagram(url, work, cfg, apify_token, groq_key, opener=None, video_fn=None) -> FetchResult:
+def fetch_instagram(url, work, cfg, apify_token, groq_key, opener=None, video_fn=None,
+                    groq_seconds_used_today: int = 0, url_check=check_url) -> FetchResult:
     if not apify_token:
         return FetchResult(platform="instagram", method="none", error="apify: sem token")
     try:
@@ -31,7 +32,9 @@ def fetch_instagram(url, work, cfg, apify_token, groq_key, opener=None, video_fn
     if it.get("videoUrl"):
         try:
             from lib.fetch_video import fetch_video
-            v = (video_fn or fetch_video)(it["videoUrl"], Path(work) / "ig", cfg, groq_key, "instagram")
+            url_check(it["videoUrl"])                     # o yt-dlp não passa pelo safe_open (anti-SSRF)
+            v = (video_fn or fetch_video)(it["videoUrl"], Path(work) / "ig", cfg, groq_key, "instagram",
+                                          groq_seconds_used_today=groq_seconds_used_today)
             if v.text: parts.append("Transcrição: " + v.text)
             r.duration_s, r.frames = v.duration_s, v.frames
             r.extra["video_method"] = v.method

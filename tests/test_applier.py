@@ -30,7 +30,7 @@ def test_plan_ops_builds_marked_blocks_catalog_and_log():
     paths = {o.path for o in m.ops}
     assert "wiki/energia-e-recarga.md" in paths and "wiki/ferramentas-e-ideias.md" in paths and "wiki/log/2026-09_curated.md" in paths
     page = [o for o in m.ops if o.path == "wiki/energia-e-recarga.md"][0]
-    assert page.kind == "update" and page.rev_before == "rev1" and marker(1, "2026-09-11").encode() in page.after
+    assert page.kind == "update" and page.rev_before == "rev1" and marker(1, "2026-09-11", "run1").encode() in page.after
     assert b"raw/curated/2026-09-10_youtube-fonte-a-r1.md" in page.after      # claim cita o raw
     assert m.per_item[1]["decision"] == "wiki" and set(m.per_item[1]["required"]) == {"claims", "catalog", "log"}
 
@@ -40,19 +40,20 @@ def test_plan_ops_both_claims_present_not_self_skipped_by_idempotency():
     # só porque o 1º claim do mesmo item já deixou o marcador no texto.
     m = plan_ops(OUT, snap(), ITEMS, Config(), "run1", "2026-09-11", {"inversor", "solar"})
     page = [o for o in m.ops if o.path == "wiki/energia-e-recarga.md"][0]
-    assert page.after.count(marker(1, "2026-09-11").encode()) == 2
+    assert page.after.count(marker(1, "2026-09-11", "run1").encode()) == 2
     assert b"22kW" in page.after and b"tarifa branca" in page.after
 
 
 def test_plan_ops_skips_already_applied_marker():
+    # re-plan DO MESMO LOTE (conflito CAS): o marcador deste run já está na página → idempotente, sem op nova
     already = PAGE.replace(
         b"## Tarifa\n\n",
-        b"## Tarifa\n\n" + marker(1, "2026-09-10").encode() + b"\n- velho ([raw](../old.md))\n",
+        b"## Tarifa\n\n" + marker(1, "2026-09-11", "run1").encode() + b"\n- velho ([raw](../old.md))\n",
     )
     s = Snap({"wiki/energia-e-recarga.md": (already, "rev1"), "CLAUDE.md": (b"", "r0")})
     m = plan_ops(OUT, s, ITEMS, Config(), "run1", "2026-09-11", {"inversor", "solar"})
     page_ops = [o for o in m.ops if o.path == "wiki/energia-e-recarga.md"]
-    assert page_ops == []   # nada novo a inserir: marcador de r1 já presente
+    assert page_ops == []   # nada novo a inserir: marcador de r1 (deste lote) já presente
 
 
 def test_plan_ops_anchor_missing_sends_item_to_retry():
@@ -152,7 +153,7 @@ def test_claim_is_always_one_line_so_undo_strips_it_whole():
     m = plan_ops(out, snap(), ITEMS, Config(), "run1", "2026-09-11", {"inversor", "solar"})
     page = [o for o in m.ops if o.path == "wiki/energia-e-recarga.md"][0].after.decode("utf-8")
     added = [l for l in page.splitlines() if l not in PAGE.decode("utf-8").splitlines()]
-    assert added == [marker(1, "2026-09-11"), "- Matriz de decisão Fonte: manual ASQ. Também chamada de grade. ([raw](../raw/curated/2026-09-10_youtube-fonte-a-r1.md))"]
+    assert added == [marker(1, "2026-09-11", "run1"), "- Matriz de decisão Fonte: manual ASQ. Também chamada de grade. ([raw](../raw/curated/2026-09-10_youtube-fonte-a-r1.md))"]
     assert strip_markers(page, [1]) == PAGE.decode("utf-8")
 
 

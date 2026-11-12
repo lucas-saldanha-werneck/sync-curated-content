@@ -6,7 +6,8 @@ def test_instagram_caption_and_video(tmp_path):
     def opener(u, **k):
         return (json.dumps([{"caption": "legenda do reel", "videoUrl": "https://cdn/v.mp4", "ownerUsername": "lucas"}]).encode(), u, {})
     vid = lambda url, *a, **k: type("R", (), {"text": "fala do vídeo", "method": "groq", "duration_s": 30, "frames": []})()
-    r = fetch_instagram("https://www.instagram.com/reel/abc/", tmp_path, Config(), "tok", "gk", opener=opener, video_fn=vid)
+    r = fetch_instagram("https://www.instagram.com/reel/abc/", tmp_path, Config(), "tok", "gk", opener=opener, video_fn=vid,
+                        url_check=lambda u: ("cdn", "1.1.1.1"))
     assert r.method == "apify" and "legenda do reel" in r.text and "fala do vídeo" in r.text and r.author == "lucas"
 
 def test_instagram_without_token(tmp_path):

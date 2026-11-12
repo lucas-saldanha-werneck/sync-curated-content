@@ -3,9 +3,9 @@ set -euo pipefail
 HOST="${1:-nova}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
-rsync -az --delete \
-  --exclude '.git' --exclude '.venv' --exclude '__pycache__' --exclude '.pytest_cache' \
-  --exclude '.superpowers' --exclude 'PLAN*.md' --exclude 'DESIGN.md' \
+# lista em deploy.exclude (testada em tests/test_deploy_exclude.py). --delete-excluded tira da VPS o que já
+# tinha ido antes (ex.: ".venv 2", ".git.parcial-*"): nada excluído aqui é necessário em /opt/sync-raindrop/app.
+rsync -az --delete --delete-excluded --exclude-from="$HERE/deploy.exclude" \
   "$HERE/" "$HOST:/opt/sync-raindrop/app/"
 
 ssh "$HOST" 'set -e
@@ -13,7 +13,8 @@ ssh "$HOST" 'set -e
   # rclone reescreve o conf via arquivo temporário na MESMA pasta: a pasta precisa ser montada (rw), não só o arquivo
   mkdir -p /opt/sync-raindrop/rclone
   test -f /opt/sync-raindrop/rclone/rclone.conf || { test -f /opt/sync-raindrop/rclone.conf && mv /opt/sync-raindrop/rclone.conf /opt/sync-raindrop/rclone/rclone.conf; }
-  test -f /opt/sync-raindrop/rclone/rclone.conf || cp /root/.config/rclone/rclone.conf /opt/sync-raindrop/rclone/rclone.conf
+  # só o remote [dropbox] (o serviço não usa os outros remotes do root); se o arquivo já existe, só tira os outros
+  python3 /opt/sync-raindrop/app/host/rclone_only_remote.py /root/.config/rclone/rclone.conf /opt/sync-raindrop/rclone/rclone.conf dropbox
   chmod 600 /opt/sync-raindrop/.env
   chmod 700 /opt/sync-raindrop/rclone
   chmod 600 /opt/sync-raindrop/rclone/rclone.conf

@@ -10,7 +10,9 @@ export HOME="$TMP/home"
 export SR_VAULT="$TMP/vault"
 mkdir -p "$HOME/.claude" "$SR_VAULT/raw/curated/_state"
 
+# a 1ª linha é um item "skip" (sem catálogo, triggers null): não pode derrubar as sugestões (SCC-01)
 cat > "$SR_VAULT/raw/curated/_state/catalog-index.jsonl" <<'JSON'
+{"id":9,"type":null,"title":"Pulado","triggers":null}
 {"id":1,"type":"skill","title":"Claude Video","triggers":["video","youtube","transcricao"]}
 JSON
 
@@ -48,6 +50,14 @@ N4=$(printf '%s\n' "$OUT4" | grep -c 'DEGRADADO')
 TOT4=$(printf '%s\n' "$OUT4" | grep -c '.')
 [ "$N4" = "1" ] && [ "$TOT4" = "1" ] && OK4=1 || OK4=0
 check "--status com DEGRADADO -> 1 linha" "$OK4"
+
+# 5: sem `timeout` no PATH (macOS sem coreutils): o espelho local ainda é atualizado (SCC-16)
+BIN="$TMP/bin"; mkdir -p "$BIN"
+for c in cat cp grep python3; do ln -s "$(command -v "$c")" "$BIN/$c"; done
+rm -f "$HOME/.claude/curated-catalog.jsonl"
+OUT5=$(PATH="$BIN" "$HOOK" --status 2>&1)
+[ -f "$HOME/.claude/curated-catalog.jsonl" ] && OK5=1 || OK5=0
+check "sem timeout no PATH -> espelho atualizado (saída: ${OUT5:-vazia})" "$OK5"
 
 rm -f "$SEEN"
 rm -rf "$TMP"

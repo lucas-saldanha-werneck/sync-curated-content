@@ -1,8 +1,17 @@
+import functools
+
 import pytest
 
 from lib.fetcher import route, fetch
 from lib.config import Config
 from lib.fetch_types import FetchResult
+from tests import iso_helpers
+
+
+@pytest.fixture(autouse=True)
+def _no_dns(monkeypatch):
+    """A guarda anti-SSRF antes do yt-dlp resolve DNS; aqui as URLs são de mentira."""
+    monkeypatch.setattr("lib.fetcher.check_url", lambda url: ("h", "1.1.1.1"))
 
 
 def test_route():
@@ -25,8 +34,7 @@ def test_fetch_dispatch_in_process(tmp_path):
 
 
 def test_fetch_timeout(tmp_path):
-    import time
-    fns = {"article": lambda url, cfg, jk, fk, **k: time.sleep(5)}
+    fns = {"article": iso_helpers.sleepy_article}
     item = {"id": 1, "link": "https://blog.com/a", "type": "article", "title": "", "tags": []}
     r = fetch(item, tmp_path, Config(fetch_timeout_s=1), {}, journal=None, fns=fns, isolate=True)
     assert r.method == "none" and "timeout" in r.error
@@ -38,9 +46,7 @@ def test_large_result_not_misreported_as_timeout(tmp_path):
     e o pai só chegava a drenar depois de esgotar o timeout inteiro, reportando timeout
     num fetch que na verdade tinha terminado."""
     import time
-    fns = {"article": lambda url, cfg, jk, fk, **k: FetchResult(
-        platform="article", text="t" * 500, method="trafilatura",
-        frames=[("f.jpg", b"x" * 300_000)])}
+    fns = {"article": iso_helpers.big_article}
     item = {"id": 1, "link": "https://blog.com/a", "type": "article", "title": "", "tags": []}
     t0 = time.monotonic()
     r = fetch(item, tmp_path, Config(fetch_timeout_s=5), {}, journal=None, fns=fns, isolate=True)
@@ -58,13 +64,7 @@ def test_timeout_kills_process_group(tmp_path):
     import time
     pidfile = tmp_path / "sleeper.pid"
 
-    def fake_video_fetch(url, work, cfg, groq_key, platform, **kwargs):
-        p = subprocess.Popen(["sleep", "30"])
-        pidfile.write_text(str(p.pid))
-        time.sleep(10)
-        return FetchResult(platform=platform, method="none")
-
-    fns = {"video": fake_video_fetch}
+    fns = {"video": functools.partial(iso_helpers.sleeper_video, str(pidfile), 10)}
     item = {"id": 1, "link": "https://youtu.be/x", "type": "video", "title": "", "tags": []}
     r = fetch(item, tmp_path, Config(fetch_timeout_s=1), {}, journal=None, fns=fns, isolate=True)
     assert r.method == "none" and "timeout" in r.error
@@ -101,10 +101,7 @@ def test_child_crash_fails_fast(tmp_path):
     import os as _os
     import time
 
-    def crash(url, cfg, jk, fk, **k):
-        _os._exit(1)
-
-    fns = {"article": crash}
+    fns = {"article": iso_helpers.crash_article}
     item = {"id": 1, "link": "https://blog.com/a", "type": "article", "title": "", "tags": []}
     t0 = time.monotonic()
     r = fetch(item, tmp_path, Config(fetch_timeout_s=5), {}, journal=None, fns=fns, isolate=True)
@@ -170,11 +167,7 @@ def test_child_kills_itself_when_parent_cannot(tmp_path, monkeypatch):
     monkeypatch.setattr(fetcher.os, "killpg", killpg_eperm_in_parent)
     monkeypatch.setattr(mpp.BaseProcess, "kill", lambda self: None)     # p.kill() também "falha"
 
-    def fake_video_fetch(url, work, cfg, groq_key, platform, **kwargs):
-        p = subprocess.Popen(["sleep", "30"])
-        pidfile.write_text(str(p.pid))
-        p.wait()                                                         # yt-dlp/ffmpeg travado
-        return FetchResult(platform=platform, method="none")
+    fake_video_fetch = functools.partial(iso_helpers.sleeper_video, str(pidfile), 0)   # yt-dlp/ffmpeg travado
 
     item = {"id": 1, "link": "https://youtu.be/x", "type": "video", "title": "", "tags": []}
     r = fetch(item, tmp_path, Config(fetch_timeout_s=1), {}, journal=None, fns={"video": fake_video_fetch}, isolate=True)

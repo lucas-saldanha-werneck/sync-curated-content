@@ -12,6 +12,7 @@ class LimitError(Exception): ...
 
 HUBS = {"wiki/2olhares.md", "wiki/luxvolt.md", "wiki/pessoal.md"}
 WIKI_PAGE_RE = re.compile(r"^wiki/[a-z0-9-]+\.md$")   # mesmo `pattern` de claims[].page/supersedes[].page no schema
+NEW_PAGE_RE = re.compile(r"^[a-z0-9-]{3,60}$")        # mesmo `pattern` de new_page.name no schema
 MIN_OLD_TEXT = 8                                       # old_text vazio/curto casaria em qualquer lugar (vazio = topo do arquivo)
 
 
@@ -41,8 +42,25 @@ def _one_line(text: str) -> str:
     return re.sub(r"^#+\s*", "", " ".join(text.split()))
 
 
-def marker(item_id: int, today: str) -> str:
-    return f"<!-- curated:r{item_id} {today} -->"
+def marker(item_id: int, today: str, run_id: str | None = None) -> str:
+    """O run_id no marcador separa "já aplicado NESTE lote" (re-plan após conflito: idempotente) de
+    "contribuição de um lote anterior" (retry/recapture/redo: é trocada pela nova)."""
+    return f"<!-- curated:r{item_id} {today}{' ' + run_id if run_id else ''} -->"
+
+
+def strip_item_claims(text: str, item_id: int) -> str:
+    """Remove as claims (marcador + bullet com link para o raw) que o item deixou em lotes anteriores.
+    Só casa a linha de claim (`- ... ([raw](../...))`), nunca o corpo de uma página nova criada pelo item."""
+    return re.sub(rf"<!-- curated:r{item_id} [^>]*-->\n- [^\n]*\(\[raw\]\(\.\./[^)\n]*\)\)[ \t]*(?:\n|$)", "", text)
+
+
+def safe_title(title) -> str:
+    """Título do Raindrop vai cru para a linha do log da wiki: tira o que vira markdown ativo
+    (link, imagem, wikilink, HTML, código, tabela) e quebras de linha."""
+    t = " ".join(str(title or "").split())
+    t = re.sub(r"\b(?:https?|javascript|vbscript|data|file|obsidian):[^\s)\]>]*", "", t, flags=re.I)   # antes de tirar ( [ <
+    t = re.sub(r"[\[\]()<>!`|\\]", "", t)
+    return " ".join(t.split())[:80]
 
 
 TAIL_HEADINGS = ("## fontes", "## ver também")
@@ -119,6 +137,7 @@ def plan_ops(output: dict, snap: Snap, items: dict, cfg, run_id: str, today: str
         raw_rel = info.get("raw")
         pi = {"decision": it.get("decision"), "pages": [], "catalog": None, "required": [], "done": []}
         m.per_item[iid] = pi
+        mk = marker(iid, today, run_id)
 
         # edições deste item ficam num staging local; só entram no `files`/`touched` compartilhados
         # se o item inteiro terminar sem erro — evita vazar edição parcial de um item que caiu para "retry".
@@ -141,41 +160,62 @@ def plan_ops(output: dict, snap: Snap, items: dict, cfg, run_id: str, today: str
                 }
                 pi["required"] = ["catalog", "log"] + (["claims"] if it["decision"] == "wiki" else [])
 
+            # retry/recapture/redo: claims que o item deixou em lote anterior saem de toda página que esta
+            # saída não tocar (nas páginas tocadas, a troca acontece na inserção, logo abaixo)
+            targets = {c.get("page") for c in it.get("claims", [])} if it["decision"] == "wiki" else set()
+            for rel in list(files):
+                if (rel in targets or not WIKI_PAGE_RE.match(rel) or rel == cfg.catalog_page
+                        or f"<!-- curated:r{iid} ".encode() not in bytes(files[rel])):
+                    continue
+                old_txt = bytes(files[rel]).decode("utf-8", "ignore")
+                if mk in old_txt:
+                    continue                                    # já é deste lote (re-plan)
+                new_txt = strip_item_claims(old_txt, iid)
+                if new_txt != old_txt:
+                    item_files[rel] = bytearray(new_txt.encode("utf-8")); item_touched.add(rel)
+
             if it["decision"] == "wiki":
                 blocks: dict[str, list] = {}
                 for c in it.get("claims", []):
                     page = c["page"]
-                    if page in HUBS or page not in files:
+                    # repete o `pattern` do schema: a saída pode vir pelo fallback sem validação do CLI (`result` em texto)
+                    if (not isinstance(page, str) or not WIKI_PAGE_RE.match(page) or page in HUBS
+                            or page == cfg.catalog_page or page not in files):
                         raise GrammarError(f"página inválida: {page}")
                     text = _one_line(validate_text(c["text"], 600, pages_allowed, source_url=src))
                     blocks.setdefault(page, []).append((c.get("anchor", ""), f"- {text} ([raw]({'../' + raw_rel}))"))
 
                 if it.get("new_page"):
                     np = it["new_page"]
+                    if not isinstance(np.get("name"), str) or not NEW_PAGE_RE.match(np["name"]):
+                        raise GrammarError(f"nome de página nova inválido: {np.get('name')!r}")
                     rel = f"wiki/{np['name']}.md"
                     already = files.get(rel)                                 # snapshot: bytearray da página, ou None
-                    if rel in HUBS or (already is not None and marker(iid, today).encode() not in bytes(already)):
+                    own = already is not None and f"<!-- curated:r{iid} ".encode() in bytes(already)
+                    if rel in HUBS or rel == cfg.catalog_page or (already is not None and not own):
                         raise GrammarError(f"página nova já existe: {rel}")     # colisão real: existe e não tem o marcador deste item
-                    if already is not None:
-                        continue                                                # re-plan após conflito: este item já criou a página (idempotente, Codex #3)
-                    body = validate_text(np["body"], 6000, pages_allowed | {np["name"]}, source_url=src)
-                    summ = validate_text(np["summary"], 200, pages_allowed)
-                    item_files[rel] = bytearray(f"# {np['name']}\n\n{summ}\n\n{marker(iid, today)}\n{body}\n".encode())
-                    item_touched.add(rel)
+                    # re-plan após conflito: este item já criou a página NESTE lote → não recria, mas segue com
+                    # claims/catálogo/log (o `continue` antigo pulava o item inteiro). Página de lote anterior do
+                    # mesmo item (retry/redo) é regerada com o conteúdo novo.
+                    if not (own and mk.encode() in bytes(already)):
+                        body = validate_text(np["body"], 6000, pages_allowed | {np["name"]}, source_url=src)
+                        summ = validate_text(np["summary"], 200, pages_allowed)
+                        item_files[rel] = bytearray(f"# {np['name']}\n\n{summ}\n\n{mk}\n{body}\n".encode())
+                        item_touched.add(rel)
                     pi["pages"].append(rel)
 
                 for page, lst in blocks.items():
                     base = (item_files[page] if page in item_files else files[page]).decode("utf-8")
-                    if f"curated:r{iid} " in base:
-                        # idempotência: este item já deixou marcador nesta página em run anterior — não duplica.
+                    if mk in base:
+                        # idempotência: este item já deixou marcador nesta página NESTE lote (re-plan após conflito).
                         # (checado UMA VEZ contra o texto anterior às inserções deste item, não a cada claim,
                         # senão o 1º claim inserido faria o 2º claim do MESMO item se autodetectar como "já aplicado")
                         if page not in pi["pages"]:
                             pi["pages"].append(page)
                         continue
-                    txt = base
+                    txt = strip_item_claims(base, iid)          # claims de lote anterior do item são trocadas, não somadas
                     for anchor, line in lst:
-                        block = f"{marker(iid, today)}\n{line}"
+                        block = f"{mk}\n{line}"
                         new = insert_after_anchor(txt, anchor, block)
                         if new is None:
                             raise GrammarError(f"âncora não encontrada em {page}: {anchor!r}")
@@ -221,7 +261,7 @@ def plan_ops(output: dict, snap: Snap, items: dict, cfg, run_id: str, today: str
                 catalog_entries = [e for e in catalog_entries if e.get("id") != iid]
                 catalog_entries.append({"id": iid, "date": today, "raw": raw_rel, "catalog": pi["catalog"], "pages": pi["pages"]})
             log_lines.append(
-                f"- {today} r{iid} {it['decision']}: {info.get('title', '')[:80]} → "
+                f"- {today} r{iid} {it['decision']}: {safe_title(info.get('title'))} → "
                 f"{', '.join('[[' + p[5:-3] + ']]' for p in pi['pages']) or '—'}"
             )
 

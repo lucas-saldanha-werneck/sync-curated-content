@@ -5,10 +5,14 @@ set -u
 VAULT="${SR_VAULT:-$HOME/Library/CloudStorage/Dropbox/Projects/vault}"
 SRC="$VAULT/raw/curated/_state/catalog-index.jsonl"; MIR="$HOME/.claude/curated-catalog.jsonl"; LOG="$HOME/.claude/curated-suggest.log"
 SEEN="/tmp/curated-seen-${CLAUDE_SESSION_ID:-$PPID}"
-refresh() { [ -f "$SRC" ] && { [ ! -f "$MIR" ] || [ "$SRC" -nt "$MIR" ]; } && timeout 2 cp "$SRC" "$MIR" 2>/dev/null; }
+# `timeout` não vem no macOS (só com coreutils do Homebrew, às vezes como gtimeout): sem ele, roda sem limite
+if command -v timeout >/dev/null 2>&1; then t2() { timeout 2 "$@"; }
+elif command -v gtimeout >/dev/null 2>&1; then t2() { gtimeout 2 "$@"; }
+else t2() { "$@"; }; fi
+refresh() { [ -f "$SRC" ] && { [ ! -f "$MIR" ] || [ "$SRC" -nt "$MIR" ]; } && t2 cp "$SRC" "$MIR" 2>/dev/null; }
 if [ "${1:-}" = "--status" ]; then
   refresh; ST="$VAULT/raw/curated/_state/status.md"
-  [ -f "$ST" ] && timeout 2 grep -q 'DEGRADADO' "$ST" 2>/dev/null && echo "sync-raindrop: status DEGRADADO — ver raw/curated/_state/status.md"
+  [ -f "$ST" ] && t2 grep -q 'DEGRADADO' "$ST" 2>/dev/null && echo "sync-raindrop: status DEGRADADO — ver raw/curated/_state/status.md"
   exit 0
 fi
 INPUT=$(cat); PROMPT=$(printf '%s' "$INPUT" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("prompt",""))' 2>/dev/null)
@@ -26,7 +30,9 @@ for line in open(mir, encoding="utf-8"):
     try: e = json.loads(line)
     except Exception: continue
     if str(e.get("id")) in seen: continue
-    hits = [t for t in e.get("triggers", []) if f" {norm(t).strip()} " in p]
+    trig = e.get("triggers") if isinstance(e, dict) else None
+    if not isinstance(trig, list): continue          # item sem catálogo (skip) tem triggers null: pula a linha, não o hook
+    hits = [t for t in trig if isinstance(t, str) and f" {norm(t).strip()} " in p]
     if len(hits) >= 2 and (best is None or len(hits) > best[0]): best = (len(hits), e)
 if best:
     e = best[1]; title = re.sub(r"[^A-Za-z0-9 ,.:/_-]", "", str(e.get("title", "")))[:60]
